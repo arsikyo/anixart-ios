@@ -8,6 +8,7 @@ struct APISettingsView: View {
     @State private var baseURLText = APIConfiguration.baseURL.absoluteString
     @State private var isRefreshing = false
     @State private var statusMessage: String?
+    @State private var showLogs = false
 
     var body: some View {
         NavigationStack {
@@ -80,6 +81,12 @@ struct APISettingsView: View {
                         LabeledContent("Telegram OAuth", value: config.telegramAuthAvailable ? "Доступен" : "Отключён")
                         LabeledContent("Google OAuth", value: config.googleAuthAvailable ? "Доступен" : "Отключён")
                     }
+                    // DEBUG_LOGGER_TEMPORARY
+                    Button {
+                        showLogs = true
+                    } label: {
+                        Label("Открыть логи диагностики", systemImage: "ladybug")
+                    }
                 }
             }
             .navigationTitle("Настройки API")
@@ -87,6 +94,9 @@ struct APISettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Готово") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $showLogs) {
+                DebugLogsView()
             }
             .alert("Настройки API", isPresented: Binding(
                 get: { statusMessage != nil },

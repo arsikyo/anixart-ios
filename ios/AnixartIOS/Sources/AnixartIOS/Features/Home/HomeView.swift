@@ -12,6 +12,7 @@ struct HomeView: View {
     @State private var currentRecPage = 0
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var showLogs = false
 
     private let api = AnixartAPI()
 
@@ -67,19 +68,32 @@ struct HomeView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    // DEBUG_LOGGER_TEMPORARY
                     Button {
+                        showLogs = true
+                    } label: {
+                        Label("Логи", systemImage: "ladybug")
+                    }
+
+                    Button {
+                        DebugLogger.log(.nav, "HomeView tap random release")
                         Task { await openRandomRelease() }
                     } label: {
                         Label("Случайное", systemImage: "dice")
                     }
                 }
             }
+            .sheet(isPresented: $showLogs) {
+                DebugLogsView()
+            }
             .refreshable {
+                DebugLogger.log(.nav, "HomeView pull-to-refresh")
                 await loadAll(reset: true)
             }
             .task {
                 if watching.isEmpty && recommendations.isEmpty {
+                    DebugLogger.log(.nav, "HomeView initial loadAll")
                     await loadAll(reset: true)
                 }
             }

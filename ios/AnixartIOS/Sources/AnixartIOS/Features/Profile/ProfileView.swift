@@ -5,6 +5,7 @@ struct ProfileView: View {
 
     @State private var friends: [Profile] = []
     @State private var showSettings = false
+    @State private var showLogs = false
     @State private var isLoading = false
 
     private let api = AnixartAPI()
@@ -133,6 +134,13 @@ struct ProfileView: View {
                         Label("Зеркала API и настройки", systemImage: "server.rack")
                     }
 
+                    // DEBUG_LOGGER_TEMPORARY
+                    Button {
+                        showLogs = true
+                    } label: {
+                        Label("Диагностика и логи", systemImage: "ladybug")
+                    }
+
                     if session.isAuthenticated {
                         Button("Выйти из аккаунта", role: .destructive) {
                             session.signOut()
@@ -149,6 +157,9 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showSettings) {
                 APISettingsView()
+            }
+            .sheet(isPresented: $showLogs) {
+                DebugLogsView()
             }
         }
     }

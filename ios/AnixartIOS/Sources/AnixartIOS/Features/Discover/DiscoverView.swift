@@ -207,6 +207,7 @@ struct DiscoverView: View {
     }
 
     private func loadCurrentSection() async {
+        DebugLogger.log(.nav, "DiscoverView section=\(section.rawValue)")
         switch section {
         case .schedule:
             if schedule == nil { await loadSchedule() }
@@ -223,6 +224,7 @@ struct DiscoverView: View {
         do {
             schedule = try await api.schedule()
         } catch {
+            DebugLogger.log(.ui, "DiscoverView loadSchedule error: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }
@@ -233,6 +235,7 @@ struct DiscoverView: View {
         do {
             collections = try await api.collections(page: 0).content
         } catch {
+            DebugLogger.log(.ui, "DiscoverView loadCollections error: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }
@@ -243,11 +246,13 @@ struct DiscoverView: View {
         do {
             history = try await api.history(page: 0).content
         } catch {
+            DebugLogger.log(.ui, "DiscoverView loadHistory error: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }
 
     private func removeFromHistory(_ release: Release) async {
+        DebugLogger.log(.nav, "DiscoverView removeFromHistory release=\(release.id)")
         do {
             _ = try await api.deleteFromHistory(releaseId: release.id)
             history.removeAll { $0.id == release.id }

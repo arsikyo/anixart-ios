@@ -27,6 +27,7 @@ struct LoginView: View {
     @State private var manualOAuthToken = ""
     @State private var showAdvancedOAuth = false
     @State private var showAPISettings = false
+    @State private var showLogs = false
     @State private var isLoading = false
 
     var body: some View {
@@ -58,10 +59,15 @@ struct LoginView: View {
 
                     Section {
                         Button("Продолжить без входа (только каталог/расписание)") {
+                            DebugLogger.log(.nav, "LoginView enterGuestMode")
                             session.enterGuestMode()
                         }
                         Button("Настройки зеркал API") {
                             showAPISettings = true
+                        }
+                        // DEBUG_LOGGER_TEMPORARY
+                        Button("Логи диагностики") {
+                            showLogs = true
                         }
                     } footer: {
                         Text("Активный сервер: \(APIConfiguration.baseURL.absoluteString)")
@@ -71,6 +77,9 @@ struct LoginView: View {
             .navigationTitle("Anixart")
             .sheet(isPresented: $showAPISettings) {
                 APISettingsView()
+            }
+            .sheet(isPresented: $showLogs) {
+                DebugLogsView()
             }
             .sheet(item: $session.pendingTelegramAuth) { authRequest in
                 TelegramOAuthSheet(request: authRequest) { result in

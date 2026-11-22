@@ -29,6 +29,7 @@ struct ReleaseDetailView: View {
     @State private var isSpoilerComment = false
     @State private var isSubmittingComment = false
     @State private var alertMessage: String?
+    @State private var showLogs = false
 
     private let api = AnixartAPI()
 
@@ -49,7 +50,21 @@ struct ReleaseDetailView: View {
         }
         .navigationTitle(current.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                // DEBUG_LOGGER_TEMPORARY
+                Button {
+                    showLogs = true
+                } label: {
+                    Label("Логи", systemImage: "ladybug")
+                }
+            }
+        }
+        .sheet(isPresented: $showLogs) {
+            DebugLogsView()
+        }
         .task(id: release.id) {
+            DebugLogger.log(.nav, "Open ReleaseDetailView id=\(release.id) title='\(release.displayTitle)'")
             await loadAll()
         }
         .fullScreenCover(item: $activePlayback) { target in
@@ -163,6 +178,7 @@ struct ReleaseDetailView: View {
             HStack(spacing: 10) {
                 if let firstEpisode = episodes.first {
                     Button {
+                        DebugLogger.log(.nav, "Tap 'Смотреть' release=\(release.id) ep=\(firstEpisode.position) url='\(firstEpisode.url)' source='\(selectedSource?.name ?? "nil")'")
                         activePlayback = PlaybackTarget(episode: firstEpisode)
                     } label: {
                         Label("Смотреть", systemImage: "play.fill")
@@ -323,6 +339,7 @@ struct ReleaseDetailView: View {
                         ForEach(episodes, id: \.stableId) { episode in
                             HStack(spacing: 12) {
                                 Button {
+                                    DebugLogger.log(.nav, "Tap episode row release=\(release.id) ep=\(episode.position) url='\(episode.url)'")
                                     activePlayback = PlaybackTarget(episode: episode)
                                 } label: {
                                     HStack(spacing: 10) {
@@ -478,6 +495,7 @@ struct ReleaseDetailView: View {
     }
 
     private func loadSources(for voiceover: VoiceoverType) async {
+        DebugLogger.log(.nav, "loadSources voiceover='\(voiceover.name)' (id=\(voiceover.id))")
         isLoadingSources = true
         sources = []
         selectedSource = nil
@@ -487,24 +505,31 @@ struct ReleaseDetailView: View {
         do {
             let loadedSources = try await api.episodeSources(releaseId: release.id, typeId: voiceover.id)
             sources = loadedSources
+            DebugLogger.log(.api, "Loaded \(loadedSources.count) sources: \(loadedSources.map(\.name).joined(separator: ", "))")
             if let firstSource = loadedSources.first {
                 selectedSource = firstSource
                 await loadEpisodes(for: firstSource)
             }
         } catch {
+            DebugLogger.log(.ui, "loadSources error: \(error.localizedDescription)", level: .error)
             alertMessage = error.localizedDescription
         }
     }
 
     private func loadEpisodes(for source: VideoSource) async {
         guard let voiceover = selectedVoiceover else { return }
+        DebugLogger.log(.nav, "loadEpisodes voiceover=\(voiceover.id) source='\(source.name)' (id=\(source.id))")
         isLoadingEpisodes = true
         episodes = []
         defer { isLoadingEpisodes = false }
 
         do {
-            episodes = try await api.episodes(releaseId: release.id, typeId: voiceover.id, sourceId: source.id)
+            let loaded = try await api.episodes(releaseId: release.id, typeId: voiceover.id, sourceId: source.id)
+            episodes = loaded
+            let firstSample = loaded.first.map { "ep1=\($0.url) iframe=\(String(describing: $0.iframe))" } ?? "none"
+            DebugLogger.log(.api, "Loaded \(loaded.count) episodes (\(firstSample))")
         } catch {
+            DebugLogger.log(.ui, "loadEpisodes error: \(error.localizedDescription)", level: .error)
             alertMessage = error.localizedDescription
         }
     }

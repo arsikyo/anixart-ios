@@ -36,10 +36,12 @@ final class SessionStore: ObservableObject {
     }
 
     func bootstrap() async {
+        DebugLogger.log(.app, "SessionStore.bootstrap start")
         let result = await mirrorDiscovery.syncConfiguration()
         availableMirrors = result.urls
         configURLs = result.configURLs
         toggles = result.toggles
+        DebugLogger.log(.app, "Bootstrap mirrors=\(result.urls.count) baseURL=\(APIConfiguration.baseURL.absoluteString) kodik=\(APIConfiguration.kodikVideoLinksURL)")
 
         if isAuthenticated {
             await refreshProfileAndNotifications()
@@ -47,10 +49,12 @@ final class SessionStore: ObservableObject {
     }
 
     func refreshMirrors() async {
+        DebugLogger.log(.app, "Refreshing mirrors...")
         let result = await mirrorDiscovery.syncConfiguration()
         availableMirrors = result.urls
         configURLs = result.configURLs
         toggles = result.toggles
+        DebugLogger.log(.app, "Mirrors refreshed: \(result.urls.joined(separator: ", "))")
     }
 
     func refreshProfileAndNotifications() async {
@@ -62,6 +66,7 @@ final class SessionStore: ObservableObject {
            let resp = try? await api.profile(id: profileID),
            let profile = resp.profile {
             currentProfile = profile
+            DebugLogger.log(.app, "Profile loaded: id=\(profile.id) login=\(profile.login ?? "-")")
         }
         if let notif = try? await api.notificationCount() {
             unreadNotificationsCount = notif.count ?? 0
@@ -77,6 +82,7 @@ final class SessionStore: ObservableObject {
     }
 
     func signIn(login: String, password: String) async {
+        DebugLogger.log(.nav, "User signIn attempt for login='\(login)'")
         do {
             let response = try await api.signIn(login: login, password: password)
             guard let profileToken = response.profileToken, !profileToken.token.isEmpty else {
@@ -84,6 +90,7 @@ final class SessionStore: ObservableObject {
             }
             completeSession(token: profileToken.token, profile: response.profile, profileId: profileToken.id)
         } catch {
+            DebugLogger.log(.ui, "signIn failed: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }
@@ -266,6 +273,7 @@ final class SessionStore: ObservableObject {
     }
 
     func signOut() {
+        DebugLogger.log(.nav, "User signed out")
         KeychainStore.clearSession()
         isAuthenticated = false
         isGuestMode = false
@@ -289,6 +297,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func completeSession(token: String, profile: Profile?, profileId: Int64) {
+        DebugLogger.log(.app, "Session completed for profileId=\(profile?.id ?? profileId)")
         KeychainStore.setToken(token)
         KeychainStore.setProfileID(profile?.id ?? profileId)
         currentProfile = profile

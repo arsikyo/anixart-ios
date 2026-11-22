@@ -122,24 +122,48 @@ struct APIClient: Sendable {
             request.httpBody = try JSONEncoder.anixart.encode(AnyEncodable(body))
         }
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.unexpectedResponse
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw APIError.httpStatus(http.statusCode)
-        }
+        let startedAt = Date()
+        DebugLogger.log(.api, "-> \(method.rawValue) \(url.absoluteString)", level: .debug)
 
         do {
-            let decoded = try JSONDecoder.anixart.decode(Response.self, from: data)
-            if validateStatus, let status = decoded as? APIStatus, status.code != 0 {
-                throw APIError.server(code: status.code)
+            let (data, response) = try await session.data(for: request)
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+
+            guard let http = response as? HTTPURLResponse else {
+                DebugLogger.log(.api, "<- NON-HTTP \(url.absoluteString) (\(elapsedMs)ms)", level: .error)
+                throw APIError.unexpectedResponse
             }
-            return decoded
+            guard (200..<300).contains(http.statusCode) else {
+                let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(300))
+                DebugLogger.log(.api, "<- HTTP \(http.statusCode) \(url.absoluteString) (\(elapsedMs)ms, \(data.count)B) body=\(snippet)", level: .error)
+                throw APIError.httpStatus(http.statusCode)
+            }
+
+            do {
+                let decoded = try JSONDecoder.anixart.decode(Response.self, from: data)
+                if validateStatus, let status = decoded as? APIStatus {
+                    if status.code != 0 {
+                        DebugLogger.log(.api, "<- API code=\(status.code) HTTP \(http.statusCode) \(cleanPath) (\(elapsedMs)ms)", level: .warning)
+                        throw APIError.server(code: status.code)
+                    }
+                    DebugLogger.log(.api, "<- OK HTTP \(http.statusCode) code=0 \(cleanPath) (\(elapsedMs)ms, \(data.count)B)", level: .debug)
+                } else {
+                    DebugLogger.log(.api, "<- OK HTTP \(http.statusCode) \(cleanPath) (\(elapsedMs)ms, \(data.count)B)", level: .debug)
+                }
+                return decoded
+            } catch let apiError as APIError {
+                throw apiError
+            } catch {
+                let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(350))
+                DebugLogger.log(.api, "<- DECODE ERROR \(cleanPath): \(error.localizedDescription) | body=\(snippet)", level: .error)
+                throw APIError.decodingFailed(error.localizedDescription)
+            }
         } catch let apiError as APIError {
             throw apiError
         } catch {
-            throw APIError.decodingFailed(error.localizedDescription)
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DebugLogger.log(.api, "<- NETWORK ERROR \(method.rawValue) \(url.absoluteString) (\(elapsedMs)ms): \(error.localizedDescription)", level: .error)
+            throw error
         }
     }
 
@@ -149,6 +173,9 @@ struct APIClient: Sendable {
         headers: [String: String] = [:],
         form: [String: String] = [:]
     ) async throws -> (body: String, headers: [String: String], statusCode: Int) {
+        let startedAt = Date()
+        DebugLogger.log(.api, "-> RAW \(method.rawValue) \(url.absoluteString)", level: .debug)
+
         var request = URLRequest(url: url)
         request.httpMethod = method.rawValue
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
@@ -161,19 +188,32 @@ struct APIClient: Sendable {
             request.httpBody = Data(encoded.utf8)
         }
 
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw APIError.unexpectedResponse
+        do {
+            let (data, response) = try await session.data(for: request)
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            guard let http = response as? HTTPURLResponse else {
+                DebugLogger.log(.api, "<- RAW NON-HTTP \(url.absoluteString) (\(elapsedMs)ms)", level: .error)
+                throw APIError.unexpectedResponse
+            }
+            let bodyText = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+            var stringHeaders: [String: String] = [:]
+            for (key, value) in http.allHeaderFields {
+                stringHeaders[String(describing: key)] = String(describing: value)
+            }
+            let level: DebugLogLevel = (200..<300).contains(http.statusCode) ? .debug : .warning
+            DebugLogger.log(.api, "<- RAW HTTP \(http.statusCode) \(url.absoluteString) (\(elapsedMs)ms, \(data.count)B)", level: level)
+            return (bodyText, stringHeaders, http.statusCode)
+        } catch let apiError as APIError {
+            throw apiError
+        } catch {
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            DebugLogger.log(.api, "<- RAW NETWORK ERROR \(url.absoluteString) (\(elapsedMs)ms): \(error.localizedDescription)", level: .error)
+            throw error
         }
-        let bodyText = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-        var stringHeaders: [String: String] = [:]
-        for (key, value) in http.allHeaderFields {
-            stringHeaders[String(describing: key)] = String(describing: value)
-        }
-        return (bodyText, stringHeaders, http.statusCode)
     }
 
     func fetchRedirectLocation(url: URL, headers: [String: String] = [:]) async throws -> String? {
+        DebugLogger.log(.api, "-> REDIRECT HEAD/GET \(url.absoluteString)", level: .debug)
         let delegate = NoRedirectDelegate()
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15
@@ -184,7 +224,9 @@ struct APIClient: Sendable {
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
         let (_, response) = try await tempSession.data(for: request)
         guard let http = response as? HTTPURLResponse else { return nil }
-        return http.value(forHTTPHeaderField: "Location")
+        let location = http.value(forHTTPHeaderField: "Location")
+        DebugLogger.log(.api, "<- REDIRECT HTTP \(http.statusCode) location=\(location ?? "nil")", level: .debug)
+        return location
     }
 
     private static func formEscape(_ string: String) -> String {

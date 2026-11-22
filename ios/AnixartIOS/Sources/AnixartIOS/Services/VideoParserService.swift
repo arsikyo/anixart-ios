@@ -27,47 +27,75 @@ struct VideoParserService: Sendable {
     }
 
     func resolve(episodeURL rawURL: String, forceWeb: Bool = false) async -> VideoParseResult {
-        let normalized = rawURL.hasPrefix("//") ? "https:" + rawURL : rawURL
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.hasPrefix("//") ? "https:" + trimmed : trimmed
+        DebugLogger.log(.parser, "resolve start: rawURL='\(rawURL)' forceWeb=\(forceWeb)")
+
         guard let url = URL(string: normalized), let host = url.host?.lowercased() else {
+            DebugLogger.log(.parser, "Invalid episodeURL: '\(rawURL)' -> about:blank web fallback", level: .error)
             return VideoParseResult(variants: [], headers: [:], useWebFallback: true, originalURL: URL(string: "about:blank")!)
         }
 
         if forceWeb {
+            DebugLogger.log(.parser, "forceWeb=true -> opening \(url.absoluteString) in WKWebView")
             return VideoParseResult(variants: [], headers: [:], useWebFallback: true, originalURL: url)
         }
 
         if host.contains("kodik") || host.contains("aniqit") || host.contains("anivod") || host.contains("kodikres") {
-            if let res = await parseKodik(url: url), !res.variants.isEmpty { return res }
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseKodik")
+            if let res = await parseKodik(url: url), !res.variants.isEmpty {
+                DebugLogger.log(.parser, "parseKodik success: \(res.variants.map { "\($0.quality)=\($0.url.absoluteString)" }.joined(separator: ", "))")
+                return res
+            }
+            DebugLogger.log(.parser, "parseKodik returned 0 variants -> web fallback", level: .warning)
         } else if host.contains("vk.com") || host.contains("vk.ru") || host.contains("vkvideo.") {
-            if let res = await parseVKVideo(url: url), !res.variants.isEmpty { return res }
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseVKVideo")
+            if let res = await parseVKVideo(url: url), !res.variants.isEmpty {
+                DebugLogger.log(.parser, "parseVKVideo success: \(res.variants.count) variants")
+                return res
+            }
+            DebugLogger.log(.parser, "parseVKVideo returned 0 variants -> web fallback", level: .warning)
         } else if host.contains("studiomir.club") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseStudioMir")
             if let res = await parseStudioMir(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("anilibria.") || host.contains("anilib.one") || host.contains("libria.fun") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseAniLibria")
             if let res = await parseAniLibria(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("rutube.ru") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseRuTube")
             if let res = await parseRuTube(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("sibnet.ru") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseSibnet")
             if let res = await parseSibnet(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("my.mail.ru") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseMailRu")
             if let res = await parseMailRu(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("ok.ru") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseOK")
             if let res = await parseOK(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("myvi.top") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseMyvi")
             if let res = await parseMyvi(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("secvideo1.online") || host.contains("csst.online") || host.contains("sstrge.online") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseAllvideo")
             if let res = await parseAllvideo(url: url), !res.variants.isEmpty { return res }
         } else if host.contains("sovetromantica.com") {
+            DebugLogger.log(.parser, "Matched host '\(host)' -> parseSovetRomantica")
             if let res = await parseSovetRomantica(url: url), !res.variants.isEmpty { return res }
         } else if normalized.hasSuffix(".m3u8") || normalized.hasSuffix(".mp4") {
+            DebugLogger.log(.parser, "Direct stream URL detected: \(url.absoluteString)")
             return VideoParseResult(
                 variants: [VideoStreamVariant(quality: "Default", url: url)],
                 headers: ["User-Agent": defaultUserAgent],
                 useWebFallback: false,
                 originalURL: url
             )
+        } else {
+            DebugLogger.log(.parser, "No native parser for host '\(host)' -> web fallback", level: .warning)
         }
 
         // Fallback во встроенный WebView-плеер, если хостинг неизвестен или прямой парсинг не вернул потоки
+        DebugLogger.log(.parser, "Returning WebFallback for \(url.absoluteString)", level: .warning)
         return VideoParseResult(variants: [], headers: [:], useWebFallback: true, originalURL: url)
     }
 
@@ -88,7 +116,10 @@ struct VideoParserService: Sendable {
         }
 
         let endpointString = APIConfiguration.kodikVideoLinksURL
-        guard var components = URLComponents(string: endpointString) else { return nil }
+        guard var components = URLComponents(string: endpointString) else {
+            DebugLogger.log(.parser, "Kodik: invalid endpointString '\(endpointString)'", level: .error)
+            return nil
+        }
         var queryItems = components.queryItems ?? []
         if !queryItems.contains(where: { $0.name == "p" }) {
             queryItems.append(URLQueryItem(name: "p", value: "56a768d08f43091901c44b54fe970049"))
@@ -97,15 +128,27 @@ struct VideoParserService: Sendable {
         queryItems.append(URLQueryItem(name: "d", value: domainPart))
         components.queryItems = queryItems
 
-        guard let apiURL = components.url,
-              let resp = try? await client.fetchRawString(
+        guard let apiURL = components.url else {
+            DebugLogger.log(.parser, "Kodik: failed to build apiURL", level: .error)
+            return nil
+        }
+
+        let resp: (body: String, headers: [String: String], statusCode: Int)
+        do {
+            resp = try await client.fetchRawString(
                 url: apiURL,
                 headers: [
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
                 ]
-              ),
-              !resp.body.isEmpty else {
+            )
+        } catch {
+            DebugLogger.log(.parser, "Kodik request failed: \(error.localizedDescription)", level: .error)
+            return nil
+        }
+
+        guard !resp.body.isEmpty else {
+            DebugLogger.log(.parser, "Kodik empty response body (HTTP \(resp.statusCode))", level: .error)
             return nil
         }
 
@@ -142,6 +185,11 @@ struct VideoParserService: Sendable {
             }
         }
 
+        if variants.isEmpty {
+            let snippet = String(resp.body.prefix(400))
+            DebugLogger.log(.parser, "Kodik HTTP \(resp.statusCode) yielded 0 variants. Body prefix: \(snippet)", level: .error)
+        }
+
         return VideoParseResult(
             variants: variants,
             headers: ["User-Agent": defaultUserAgent],
@@ -163,6 +211,7 @@ struct VideoParserService: Sendable {
 
     private func parseVKVideo(url: URL) async -> VideoParseResult? {
         guard let params = extractVKVideoParams(from: url.absoluteString) else {
+            DebugLogger.log(.parser, "VK: failed to extract video params from \(url.absoluteString)", level: .error)
             return nil
         }
 
@@ -185,6 +234,7 @@ struct VideoParserService: Sendable {
               let anon = try? JSONDecoder.anixart.decode(VKAnonymousTokenResponse.self, from: tokenData),
               let anonymousToken = anon.token,
               !anonymousToken.isEmpty else {
+            DebugLogger.log(.parser, "VK: failed to fetch anonymous_token", level: .error)
             return nil
         }
 
@@ -203,10 +253,15 @@ struct VideoParserService: Sendable {
                     "v": "5.244",
                     "videos": videosParam
                 ]
-              ),
-              let videoData = videoResp.body.data(using: .utf8),
+              ) else {
+            DebugLogger.log(.parser, "VK: video.get request failed", level: .error)
+            return nil
+        }
+
+        guard let videoData = videoResp.body.data(using: .utf8),
               let decoded = try? JSONDecoder.anixart.decode(VKVideoGetResponse.self, from: videoData),
               let files = decoded.response?.items?.first?.files else {
+            DebugLogger.log(.parser, "VK: decode/empty files HTTP \(videoResp.statusCode): \(String(videoResp.body.prefix(300)))", level: .error)
             return nil
         }
 
@@ -262,6 +317,7 @@ struct VideoParserService: Sendable {
               let epStr = firstMatch("[&?]ep=(\\d+)", in: url.absoluteString),
               let ep = Int(epStr),
               let apiURL = URL(string: "https://api.studiomir.club/api?ani=\(ani)&apikey=80b2d3e9c4ff27eb2e924c4d38f7daec") else {
+            DebugLogger.log(.parser, "StudioMir: invalid params in \(url.absoluteString)", level: .error)
             return nil
         }
 
@@ -269,6 +325,7 @@ struct VideoParserService: Sendable {
               let data = resp.body.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([StudioMirItem].self, from: data),
               let episodes = decoded.first?.players?.tsm else {
+            DebugLogger.log(.parser, "StudioMir: failed to decode response", level: .error)
             return nil
         }
 
@@ -276,7 +333,10 @@ struct VideoParserService: Sendable {
         let selected = matching.first(where: { $0.type == "TV" })
             ?? matching.first(where: { $0.type != "TR" })
             ?? matching.first
-        guard let target = selected else { return nil }
+        guard let target = selected else {
+            DebugLogger.log(.parser, "StudioMir: no episode \(ep) found", level: .warning)
+            return nil
+        }
 
         var variants: [VideoStreamVariant] = []
         if let u = target.hls?.hls2160.flatMap(URL.init(string:)) { variants.append(.init(quality: "2160p", url: u)) }
@@ -285,6 +345,7 @@ struct VideoParserService: Sendable {
         if variants.isEmpty, let def = target.url.flatMap(URL.init(string:)) {
             variants.append(.init(quality: "Default", url: def))
         }
+        DebugLogger.log(.parser, "StudioMir: \(variants.count) variants")
         return VideoParseResult(variants: variants, headers: ["User-Agent": defaultUserAgent], useWebFallback: variants.isEmpty, originalURL: url)
     }
 
@@ -296,6 +357,7 @@ struct VideoParserService: Sendable {
               let epStr = match[safe: 2],
               let ep = Int(epStr),
               let apiURL = URL(string: "https://anilibria.top/api/v1/anime/releases/\(releaseId)") else {
+            DebugLogger.log(.parser, "AniLibria: invalid params in \(url.absoluteString)", level: .error)
             return nil
         }
 
@@ -303,6 +365,7 @@ struct VideoParserService: Sendable {
               let data = resp.body.data(using: .utf8),
               let release = try? JSONDecoder.anixart.decode(AniLibriaRelease.self, from: data),
               let episode = release.episodes?.first(where: { $0.ordinal == ep }) else {
+            DebugLogger.log(.parser, "AniLibria: failed to fetch/find episode \(ep)", level: .error)
             return nil
         }
 
@@ -310,6 +373,7 @@ struct VideoParserService: Sendable {
         if let u = episode.hls1080.flatMap(URL.init(string:)) { variants.append(.init(quality: "1080p", url: u)) }
         if let u = episode.hls720.flatMap(URL.init(string:)) { variants.append(.init(quality: "720p", url: u)) }
         if let u = episode.hls480.flatMap(URL.init(string:)) { variants.append(.init(quality: "480p", url: u)) }
+        DebugLogger.log(.parser, "AniLibria: \(variants.count) variants")
         return VideoParseResult(variants: variants, headers: ["User-Agent": defaultUserAgent], useWebFallback: variants.isEmpty, originalURL: url)
     }
 
@@ -368,11 +432,13 @@ struct VideoParserService: Sendable {
         guard let html = try? await client.fetchRawString(url: url, headers: ["User-Agent": defaultUserAgent]),
               let path = firstMatch("src:\\s*\"(.*?)\"", in: html.body),
               let redirectURL = URL(string: "https://video.sibnet.ru\(path)") else {
+            DebugLogger.log(.parser, "Sibnet: failed to extract src from HTML", level: .error)
             return nil
         }
 
         let headers = ["Referer": url.absoluteString, "User-Agent": defaultUserAgent]
         guard let location = try? await client.fetchRedirectLocation(url: redirectURL, headers: headers) else {
+            DebugLogger.log(.parser, "Sibnet: no redirect location, using \(redirectURL.absoluteString)", level: .warning)
             return VideoParseResult(variants: [.init(quality: "Default", url: redirectURL)], headers: headers, useWebFallback: false, originalURL: url)
         }
 
@@ -383,7 +449,11 @@ struct VideoParserService: Sendable {
             finalURLString = secondLoc.replacingOccurrences(of: ":443", with: "")
         }
 
-        guard let finalURL = URL(string: finalURLString) else { return nil }
+        guard let finalURL = URL(string: finalURLString) else {
+            DebugLogger.log(.parser, "Sibnet: invalid finalURL '\(finalURLString)'", level: .error)
+            return nil
+        }
+        DebugLogger.log(.parser, "Sibnet resolved: \(finalURL.absoluteString)")
         return VideoParseResult(variants: [.init(quality: "Default", url: finalURL)], headers: headers, useWebFallback: false, originalURL: url)
     }
 

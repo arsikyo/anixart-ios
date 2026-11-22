@@ -118,6 +118,7 @@ struct BookmarksView: View {
     }
 
     private func load(page: Int, append: Bool) async {
+        DebugLogger.log(.nav, "BookmarksView load tab=\(selectedTab.rawValue) page=\(page) append=\(append)")
         isLoading = true
         defer { isLoading = false }
         do {
@@ -134,6 +135,7 @@ struct BookmarksView: View {
             }
             currentPage = page
         } catch {
+            DebugLogger.log(.ui, "BookmarksView load error: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }

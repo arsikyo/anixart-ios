@@ -144,6 +144,7 @@ struct SearchView: View {
     private func performSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        DebugLogger.log(.nav, "SearchView performSearch scope=\(scope.rawValue) query='\(trimmed)'")
         isLoading = true
         defer { isLoading = false }
         do {
@@ -156,16 +157,19 @@ struct SearchView: View {
                 profiles = try await api.searchProfiles(query: trimmed, page: 0).content
             }
         } catch {
+            DebugLogger.log(.ui, "SearchView error: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }
 
     private func applyFilter() async {
+        DebugLogger.log(.nav, "SearchView applyFilter")
         isLoading = true
         defer { isLoading = false }
         do {
             releases = try await api.filterReleases(page: 0, filter: filter).content
         } catch {
+            DebugLogger.log(.ui, "SearchView filter error: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }
