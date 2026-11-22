@@ -7,6 +7,16 @@ struct VoiceoverType: Codable, Identifiable, Hashable, Sendable {
     let episodesCount: Int?
     let viewCount: Int64?
     let isSub: Bool?
+
+    var iconURL: URL? {
+        guard let icon, !icon.isEmpty else { return nil }
+        return URL(string: icon.replacingOccurrences(of: "http://", with: "https://"))
+    }
+
+    var isSubtitles: Bool {
+        if let isSub { return isSub }
+        return name.localizedCaseInsensitiveContains("субтитры")
+    }
 }
 
 struct VideoSource: Codable, Identifiable, Hashable, Sendable {

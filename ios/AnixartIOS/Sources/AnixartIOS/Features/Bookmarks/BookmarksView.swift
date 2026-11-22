@@ -53,6 +53,7 @@ struct BookmarksView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(BookmarkTab.allCases) { tab in
+                                    let selectedColor = tab.listStatus?.color ?? AnixartFormat.accentRed
                                     Button {
                                         selectedTab = tab
                                     } label: {
@@ -60,8 +61,8 @@ struct BookmarksView: View {
                                             .font(.subheadline.weight(.medium))
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 7)
-                                            .background(selectedTab == tab ? Color.accentColor : Color.secondary.opacity(0.14))
-                                            .foregroundStyle(selectedTab == tab ? .white : .primary)
+                                            .background(selectedTab == tab ? selectedColor : Color.secondary.opacity(0.14))
+                                            .foregroundStyle(selectedTab == tab ? (tab.listStatus == .onHold ? Color.black.opacity(0.85) : Color.white) : .primary)
                                             .clipShape(RoundedRectangle(cornerRadius: 10))
                                     }
                                     .buttonStyle(.plain)

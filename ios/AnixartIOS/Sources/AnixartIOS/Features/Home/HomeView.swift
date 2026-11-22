@@ -80,7 +80,7 @@ struct HomeView: View {
                 }
             }
             .task(id: selectedTab) {
-                if tabCache[selectedTab] == nil {
+                if selectedTab != .myTab, tabCache[selectedTab] == nil {
                     await loadTab(selectedTab, page: 0, append: false)
                 }
             }
@@ -206,13 +206,22 @@ struct HomeView: View {
     // MARK: - Feed List
 
     private var feedList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                if (isLoading || (tabCache[selectedTab] == nil && errorMessage == nil)) && currentItems.isEmpty {
-                    ProgressView("Загрузка...")
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 80)
-                } else if let errorMessage, currentItems.isEmpty {
+        Group {
+            if selectedTab == .myTab {
+                ContentUnavailableView {
+                    Label("Пока в разработке", systemImage: "wrench.and.screwdriver")
+                } description: {
+                    Text("Персональный раздел «Моя вкладка» и его настройка пока находятся в разработке.")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        if (isLoading || (tabCache[selectedTab] == nil && errorMessage == nil)) && currentItems.isEmpty {
+                            ProgressView("Загрузка...")
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 80)
+                        } else if let errorMessage, currentItems.isEmpty {
                     ContentUnavailableView {
                         Label("Не удалось загрузить", systemImage: "exclamationmark.triangle")
                     } description: {
@@ -288,6 +297,8 @@ struct HomeView: View {
         .refreshable {
             DebugLogger.log(.nav, "HomeView pull-to-refresh tab='\(selectedTab.rawValue)'")
             await loadTab(selectedTab, page: 0, append: false)
+        }
+            }
         }
     }
 
@@ -401,6 +412,8 @@ struct HomeView: View {
             )
             errorMessage = nil
         } catch is CancellationError {
+            return
+        } catch let urlError as URLError where urlError.code == .cancelled {
             return
         } catch {
             DebugLogger.log(.ui, "HomeView load error tab='\(tab.rawValue)': \(error.localizedDescription)", level: .error)

@@ -70,11 +70,11 @@ struct ProfileView: View {
                     }
 
                     Section("Статистика") {
-                        LabeledContent("Смотрю", value: "\(profile.watchingCount ?? 0)")
-                        LabeledContent("В планах", value: "\(profile.planCount ?? 0)")
-                        LabeledContent("Просмотрено", value: "\(profile.completedCount ?? 0)")
-                        LabeledContent("Отложено", value: "\(profile.holdOnCount ?? 0)")
-                        LabeledContent("Брошено", value: "\(profile.droppedCount ?? 0)")
+                        statRow("Смотрю", count: profile.watchingCount ?? 0, color: BookmarkStatus.watching.color)
+                        statRow("В планах", count: profile.planCount ?? 0, color: BookmarkStatus.planned.color)
+                        statRow("Просмотрено", count: profile.completedCount ?? 0, color: BookmarkStatus.completed.color)
+                        statRow("Отложено", count: profile.holdOnCount ?? 0, color: BookmarkStatus.onHold.color)
+                        statRow("Брошено", count: profile.droppedCount ?? 0, color: BookmarkStatus.dropped.color)
                         LabeledContent("Избранное", value: "\(profile.favoriteCount ?? 0)")
                         LabeledContent("Просмотрено серий", value: "\(profile.watchedEpisodeCount ?? 0)")
                     }
@@ -173,6 +173,18 @@ struct ProfileView: View {
         await session.refreshProfileAndNotifications()
         if let id = session.currentProfile?.id ?? KeychainStore.getProfileID() {
             friends = (try? await api.friends(profileId: id, page: 0).content) ?? []
+        }
+    }
+
+    private func statRow(_ title: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(color)
+                .frame(width: 11, height: 11)
+            Text(title)
+            Spacer()
+            Text("\(count)")
+                .foregroundStyle(.secondary)
         }
     }
 }

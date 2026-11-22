@@ -237,6 +237,27 @@ struct AnixartAPI: Sendable {
         try await client.request("release/vote/delete/\(id)")
     }
 
+    func releaseVideos(releaseId: Int64) async throws -> ReleaseVideosResponse {
+        try await client.request("video/release/\(releaseId)")
+    }
+
+    func releaseStreamingPlatforms(releaseId: Int64) async throws -> PageableResponse<ReleaseStreamingPlatform> {
+        try await client.request("release/streaming/platform/\(releaseId)", includeToken: false)
+    }
+
+    func reportReasons() async throws -> [ReportReason] {
+        let resp: ReportReasonsResponse = try await client.request("report/reasons/release")
+        return resp.content ?? resp.reasons ?? []
+    }
+
+    func reportRelease(releaseId: Int64, reasonId: Int64, message: String) async throws -> BaseResponse {
+        try await client.request(
+            "report/release/\(releaseId)",
+            method: .post,
+            body: ReportRequest(reason: reasonId, message: message)
+        )
+    }
+
     // MARK: - Search & Filter
 
     func searchReleases(query: String, page: Int = 0, searchBy: Int = 0) async throws -> [Release] {
@@ -292,6 +313,10 @@ struct AnixartAPI: Sendable {
             query: ["sort": String(sort)]
         )
         return resp.episodes ?? []
+    }
+
+    func episodeUpdates(releaseId: Int64, page: Int = 0) async throws -> PageableResponse<EpisodeUpdateItem> {
+        try await client.request("episode/updates/\(releaseId)/\(page)", includeToken: false)
     }
 
     func markEpisodeWatched(releaseId: Int64, sourceId: Int64, position: Int) async throws -> BaseResponse {
@@ -367,6 +392,26 @@ struct AnixartAPI: Sendable {
         try await client.request("collectionFavorite/all/\(page)")
     }
 
+    func releaseCollections(releaseId: Int64, page: Int = 0) async throws -> PageableResponse<CollectionItem> {
+        try await client.request("collection/all/release/\(releaseId)/\(page)")
+    }
+
+    func myCollectionsForRelease(releaseId: Int64, page: Int = 0) async throws -> PageableResponse<CollectionItem> {
+        try await client.request("collectionMy/release/\(releaseId)/\(page)")
+    }
+
+    func myCollections(page: Int = 0) async throws -> PageableResponse<CollectionItem> {
+        try await client.request("collectionMy/all/\(page)")
+    }
+
+    func addReleaseToCollection(collectionId: Int64, releaseId: Int64) async throws -> BaseResponse {
+        try await client.request("collectionMy/release/add/\(collectionId)/\(releaseId)")
+    }
+
+    func removeReleaseFromCollection(collectionId: Int64, releaseId: Int64) async throws -> BaseResponse {
+        try await client.request("collectionMy/release/delete/\(collectionId)/\(releaseId)")
+    }
+
     // MARK: - Comments
 
     func releaseComments(releaseId: Int64, page: Int = 0, sort: Int = 1) async throws -> PageableResponse<ReleaseComment> {
@@ -374,6 +419,10 @@ struct AnixartAPI: Sendable {
             "release/comment/all/\(releaseId)/\(page)",
             query: ["sort": String(sort)]
         )
+    }
+
+    func releaseCommentReplies(commentId: Int64, page: Int = 0) async throws -> PageableResponse<ReleaseComment> {
+        try await client.request("release/comment/replies/\(commentId)/\(page)")
     }
 
     func addReleaseComment(releaseId: Int64, message: String, spoiler: Bool = false, parentCommentId: Int64? = nil, replyToProfileId: Int64? = nil) async throws -> ReleaseCommentAddResponse {

@@ -95,6 +95,19 @@ private struct ReleaseRelatedRef: Decodable {
     let id: Int64?
 }
 
+struct ReleaseVideoBanner: Codable, Hashable, Sendable {
+    let name: String?
+    let image: String?
+    let value: String?
+    let actionId: Int64?
+    let isNew: Bool?
+
+    var imageURL: URL? {
+        guard let image, !image.isEmpty else { return nil }
+        return URL(string: image.replacingOccurrences(of: "http://", with: "https://"))
+    }
+}
+
 struct Release: Codable, Identifiable, Hashable, Sendable {
     let id: Int64
     let titleRu: String?
@@ -114,6 +127,11 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
     let rating: Double?
     let voteCount: Int?
     let yourVote: Int?
+    let vote1Count: Int?
+    let vote2Count: Int?
+    let vote3Count: Int?
+    let vote4Count: Int?
+    let vote5Count: Int?
     let episodesReleased: Int?
     let episodesTotal: Int?
     let duration: Int?
@@ -128,15 +146,30 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
     let relatedId: Int64?
     let releaseDate: String?
     let airedOnDate: Int64?
+    let favoritesCount: Int?
+    let commentCount: Int?
+    let collectionCount: Int?
+    let watchingCount: Int?
+    let planCount: Int?
+    let completedCount: Int?
+    let holdOnCount: Int?
+    let droppedCount: Int?
+    let screenshots: [String]?
+    let screenshotImages: [String]?
+    let videoBanners: [ReleaseVideoBanner]?
     let status: ReleaseStatusInfo?
     let category: ReleaseCategoryInfo?
 
     private enum CodingKeys: String, CodingKey {
         case id, titleRu, titleOriginal, titleAlt, image, poster, year, genres, country
         case director, author, studio, description, note, grade, rating, voteCount, yourVote
+        case vote1Count, vote2Count, vote3Count, vote4Count, vote5Count
         case episodesReleased, episodesTotal, duration, season, ageRating, broadcast
         case profileListStatus, isFavorite, isPlayDisabled, isViewed, isAdult
-        case relatedId, related, releaseDate, airedOnDate, status, category
+        case relatedId, related, releaseDate, airedOnDate
+        case favoritesCount, commentCount, commentsCount, collectionCount
+        case watchingCount, planCount, completedCount, holdOnCount, droppedCount
+        case screenshots, screenshotImages, videoBanners, status, category
     }
 
     init(from decoder: Decoder) throws {
@@ -159,6 +192,11 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         rating = try c.decodeIfPresent(Double.self, forKey: .rating)
         voteCount = try c.decodeIfPresent(Int.self, forKey: .voteCount)
         yourVote = try c.decodeIfPresent(Int.self, forKey: .yourVote)
+        vote1Count = try c.decodeIfPresent(Int.self, forKey: .vote1Count)
+        vote2Count = try c.decodeIfPresent(Int.self, forKey: .vote2Count)
+        vote3Count = try c.decodeIfPresent(Int.self, forKey: .vote3Count)
+        vote4Count = try c.decodeIfPresent(Int.self, forKey: .vote4Count)
+        vote5Count = try c.decodeIfPresent(Int.self, forKey: .vote5Count)
         episodesReleased = try c.decodeIfPresent(Int.self, forKey: .episodesReleased)
         episodesTotal = try c.decodeIfPresent(Int.self, forKey: .episodesTotal)
         duration = try c.decodeIfPresent(Int.self, forKey: .duration)
@@ -175,6 +213,19 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         relatedId = directRelatedId ?? relatedObj?.id
         releaseDate = try c.decodeIfPresent(String.self, forKey: .releaseDate)
         airedOnDate = try c.decodeIfPresent(Int64.self, forKey: .airedOnDate)
+        favoritesCount = try c.decodeIfPresent(Int.self, forKey: .favoritesCount)
+        let cc = try c.decodeIfPresent(Int.self, forKey: .commentCount)
+        let ccs = try c.decodeIfPresent(Int.self, forKey: .commentsCount)
+        commentCount = cc ?? ccs
+        collectionCount = try c.decodeIfPresent(Int.self, forKey: .collectionCount)
+        watchingCount = try c.decodeIfPresent(Int.self, forKey: .watchingCount)
+        planCount = try c.decodeIfPresent(Int.self, forKey: .planCount)
+        completedCount = try c.decodeIfPresent(Int.self, forKey: .completedCount)
+        holdOnCount = try c.decodeIfPresent(Int.self, forKey: .holdOnCount)
+        droppedCount = try c.decodeIfPresent(Int.self, forKey: .droppedCount)
+        screenshots = try c.decodeIfPresent([String].self, forKey: .screenshots)
+        screenshotImages = try c.decodeIfPresent([String].self, forKey: .screenshotImages)
+        videoBanners = try c.decodeIfPresent([ReleaseVideoBanner].self, forKey: .videoBanners)
         status = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseStatusInfo.self, forKey: .status)
         category = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseCategoryInfo.self, forKey: .category)
     }
@@ -199,6 +250,11 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         try c.encodeIfPresent(rating, forKey: .rating)
         try c.encodeIfPresent(voteCount, forKey: .voteCount)
         try c.encodeIfPresent(yourVote, forKey: .yourVote)
+        try c.encodeIfPresent(vote1Count, forKey: .vote1Count)
+        try c.encodeIfPresent(vote2Count, forKey: .vote2Count)
+        try c.encodeIfPresent(vote3Count, forKey: .vote3Count)
+        try c.encodeIfPresent(vote4Count, forKey: .vote4Count)
+        try c.encodeIfPresent(vote5Count, forKey: .vote5Count)
         try c.encodeIfPresent(episodesReleased, forKey: .episodesReleased)
         try c.encodeIfPresent(episodesTotal, forKey: .episodesTotal)
         try c.encodeIfPresent(duration, forKey: .duration)
@@ -213,6 +269,17 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         try c.encodeIfPresent(relatedId, forKey: .relatedId)
         try c.encodeIfPresent(releaseDate, forKey: .releaseDate)
         try c.encodeIfPresent(airedOnDate, forKey: .airedOnDate)
+        try c.encodeIfPresent(favoritesCount, forKey: .favoritesCount)
+        try c.encodeIfPresent(commentCount, forKey: .commentCount)
+        try c.encodeIfPresent(collectionCount, forKey: .collectionCount)
+        try c.encodeIfPresent(watchingCount, forKey: .watchingCount)
+        try c.encodeIfPresent(planCount, forKey: .planCount)
+        try c.encodeIfPresent(completedCount, forKey: .completedCount)
+        try c.encodeIfPresent(holdOnCount, forKey: .holdOnCount)
+        try c.encodeIfPresent(droppedCount, forKey: .droppedCount)
+        try c.encodeIfPresent(screenshots, forKey: .screenshots)
+        try c.encodeIfPresent(screenshotImages, forKey: .screenshotImages)
+        try c.encodeIfPresent(videoBanners, forKey: .videoBanners)
         try c.encodeIfPresent(status, forKey: .status)
         try c.encodeIfPresent(category, forKey: .category)
     }
@@ -232,7 +299,8 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
     var imageURL: URL? {
         guard let raw = image ?? poster, !raw.isEmpty else { return nil }
         if raw.hasPrefix("http") { return URL(string: raw) }
-        return URL(string: "https://s.\(APIConfiguration.staticDomain)/posters/\(raw)")
+        let file = raw.contains(".") ? raw : "\(raw).jpg"
+        return URL(string: "https://s.\(APIConfiguration.staticDomain)/posters/\(file)")
     }
 
     var episodeText: String? {
@@ -266,6 +334,144 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
             return "\(total) эп"
         }
         return nil
+    }
+
+    var ageRatingText: String? {
+        switch ageRating {
+        case 1: return "0+"
+        case 2: return "6+"
+        case 3: return "12+"
+        case 4: return "16+"
+        case 5: return "18+"
+        default:
+            return (isAdult == true) ? "18+" : nil
+        }
+    }
+
+    var countryFlagEmoji: String {
+        let lower = (country ?? "").lowercased()
+        if lower.contains("япон") { return "🇯🇵" }
+        if lower.contains("кита") { return "🇨🇳" }
+        if lower.contains("коре") { return "🇰🇷" }
+        if lower.contains("сша") || lower.contains("америк") { return "🇺🇸" }
+        if lower.contains("росс") { return "🇷🇺" }
+        if lower.contains("франц") { return "🇫🇷" }
+        if lower.contains("велик") || lower.contains("англ") { return "🇬🇧" }
+        return "🌐"
+    }
+
+    var seasonName: String? {
+        switch season {
+        case 1: return "зима"
+        case 2: return "весна"
+        case 3: return "лето"
+        case 4: return "осень"
+        default: return nil
+        }
+    }
+
+    var countrySeasonYearText: String? {
+        var parts: [String] = []
+        if let country, !country.isEmpty {
+            parts.append(country)
+        }
+        var timeParts: [String] = []
+        if let seasonName {
+            timeParts.append(seasonName)
+        }
+        if let year, !year.isEmpty {
+            timeParts.append("\(year) г.")
+        }
+        if !timeParts.isEmpty {
+            parts.append(timeParts.joined(separator: " "))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    var episodeStatsText: String? {
+        let epPart: String?
+        if let released = episodesReleased, let total = episodesTotal {
+            if released == total && total > 0 {
+                epPart = "\(total) эп."
+            } else {
+                epPart = "\(released) из \(total) эп."
+            }
+        } else if let released = episodesReleased {
+            epPart = "\(released) эп."
+        } else if let total = episodesTotal {
+            epPart = "\(total) эп."
+        } else {
+            epPart = nil
+        }
+
+        if let epPart, let duration, duration > 0 {
+            return "\(epPart) по ~\(duration) мин."
+        }
+        if let epPart { return epPart }
+        if let duration, duration > 0 {
+            return "Длительность ~\(duration) мин."
+        }
+        return nil
+    }
+
+    var typeAndStatusText: String? {
+        let cat = category?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let st = status?.name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let items = [cat, st].compactMap { ($0?.isEmpty == false) ? $0 : nil }
+        return items.isEmpty ? nil : items.joined(separator: ", ")
+    }
+
+    var creditsText: String? {
+        var items: [String] = []
+        if let studio, !studio.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append("Студия \(studio)")
+        }
+        if let author, !author.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append("автор \(author)")
+        }
+        if let director, !director.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append("режиссёр \(director)")
+        }
+        return items.isEmpty ? nil : items.joined(separator: ", ")
+    }
+
+    var genreTags: [String] {
+        guard let genres, !genres.isEmpty else { return [] }
+        return genres
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var screenshotURLs: [URL] {
+        if let screenshotImages, !screenshotImages.isEmpty {
+            return screenshotImages.compactMap { URL(string: $0) }
+        }
+        if let screenshots, !screenshots.isEmpty {
+            return screenshots.compactMap { key in
+                if key.hasPrefix("http") { return URL(string: key) }
+                return URL(string: "https://s.\(APIConfiguration.staticDomain)/screenshots/\(key).jpg")
+            }
+        }
+        return []
+    }
+
+    var voteBreakdown: [(stars: Int, count: Int)] {
+        [
+            (5, vote5Count ?? 0),
+            (4, vote4Count ?? 0),
+            (3, vote3Count ?? 0),
+            (2, vote2Count ?? 0),
+            (1, vote1Count ?? 0)
+        ]
+    }
+
+    var listStatsTotal: Int {
+        (watchingCount ?? 0)
+            + (planCount ?? 0)
+            + (completedCount ?? 0)
+            + (holdOnCount ?? 0)
+            + (droppedCount ?? 0)
     }
 
     var announcementDateText: String? {
