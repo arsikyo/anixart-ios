@@ -28,6 +28,7 @@ struct BookmarksView: View {
     @State private var selectedTab: BookmarkTab = .watching
     @State private var releases: [Release] = []
     @State private var currentPage = 0
+    @State private var tabCache: [BookmarkTab: (items: [Release], page: Int)] = [:]
     @State private var isLoading = false
     @State private var errorMessage: String?
 
@@ -87,7 +88,14 @@ struct BookmarksView: View {
                             if isLoading && releases.isEmpty {
                                 ProgressView("Загрузка списка...")
                             } else if releases.isEmpty {
-                                ContentUnavailableView("Список пуст", systemImage: "bookmark")
+                                ContentUnavailableView {
+                                    Label("Список пуст", systemImage: "bookmark")
+                                } actions: {
+                                    Button("Обновить") {
+                                        Task { await load(page: 0, append: false) }
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
                             }
                         }
                         .refreshable {
@@ -102,7 +110,11 @@ struct BookmarksView: View {
                     .environmentObject(session)
             }
             .task(id: selectedTab) {
-                if session.isAuthenticated {
+                guard session.isAuthenticated else { return }
+                if let cached = tabCache[selectedTab] {
+                    releases = cached.items
+                    currentPage = cached.page
+                } else {
                     await load(page: 0, append: false)
                 }
             }
@@ -122,18 +134,26 @@ struct BookmarksView: View {
         isLoading = true
         defer { isLoading = false }
         do {
+            let targetTab = selectedTab
             let items: [Release]
-            if let status = selectedTab.listStatus {
+            if let status = targetTab.listStatus {
                 items = try await api.profileList(status: status, page: page).content
             } else {
                 items = try await api.favorites(page: page).content
             }
-            if append {
-                releases.append(contentsOf: items)
+            let updatedItems: [Release]
+            if append && targetTab == selectedTab {
+                updatedItems = releases + items
+            } else if append {
+                updatedItems = (tabCache[targetTab]?.items ?? []) + items
             } else {
-                releases = items
+                updatedItems = items
             }
-            currentPage = page
+            tabCache[targetTab] = (updatedItems, page)
+            if targetTab == selectedTab {
+                releases = updatedItems
+                currentPage = page
+            }
         } catch {
             DebugLogger.log(.ui, "BookmarksView load error: \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription

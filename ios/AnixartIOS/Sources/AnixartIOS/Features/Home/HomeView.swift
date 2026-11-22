@@ -1,361 +1,511 @@
 import SwiftUI
 
-private struct InterestingReleaseDestination: Hashable {
-    let releaseID: Int64
-    let title: String?
+private enum HomeFeedTab: String, CaseIterable, Identifiable, Hashable {
+    case myTab = "Моя вкладка"
+    case anime = "Аниме"
+    case donghua = "Дунхуа"
+    case latest = "Последнее"
+    case ongoing = "Онгоинги"
+    case announcements = "Анонсы"
+    case completed = "Завершённые"
+    case movies = "Фильмы"
+    case ova = "OVA"
+
+    var id: String { rawValue }
+}
+
+private enum HomeDestination: Hashable {
+    case quickSearch
+    case notifications
+    case feedSettings
+    case myTabSettings
+}
+
+private struct HomeTabPageCache {
+    var items: [Release]
+    var page: Int
+    var hasMore: Bool
 }
 
 struct HomeView: View {
-    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var session: SessionStore
 
-    @State private var watching: [Release] = []
-    @State private var recommendations: [Release] = []
-    @State private var discussing: [Release] = []
-    @State private var interesting: [InterestingItem] = []
-    @State private var randomRelease: Release?
-    @State private var isRandomPresented = false
-    @State private var currentRecPage = 0
+    @State private var selectedTab: HomeFeedTab = .anime
+    @State private var tabCache: [HomeFeedTab: HomeTabPageCache] = [:]
     @State private var isLoading = false
+    @State private var isLoadingMore = false
     @State private var errorMessage: String?
-    @State private var showLogs = false
 
     private let api = AnixartAPI()
+    private let accentRed = Color(red: 0.94, green: 0.27, blue: 0.36)
+
+    private var currentItems: [Release] {
+        tabCache[selectedTab]?.items ?? []
+    }
+
+    private var hasMore: Bool {
+        tabCache[selectedTab]?.hasMore ?? true
+    }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
-                    if let impText = session.toggles?.impMessageText,
-                       session.toggles?.impMessageEnabled == true,
-                       !impText.isEmpty {
-                        Text(impText)
-                            .font(.footnote)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.orange.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .padding(.horizontal)
-                    }
-
-                    if !interesting.isEmpty {
-                        interestingCarousel
-                    }
-
-                    if !watching.isEmpty {
-                        releaseCarousel(title: "Сейчас смотрят", releases: watching)
-                    }
-
-                    if !discussing.isEmpty {
-                        releaseCarousel(title: "Обсуждаемое", releases: discussing)
-                    }
-
-                    if !recommendations.isEmpty {
-                        recommendationsGrid
-                    } else if !isLoading {
-                        ContentUnavailableView(
-                            "Лента пуста",
-                            systemImage: "sparkles.tv",
-                            description: Text("Нажмите «Обновить» или проверьте адрес API в настройках.")
-                        )
-                    }
-                }
-                .padding(.vertical)
+            VStack(spacing: 0) {
+                topSearchBar
+                tabsStrip
+                Divider()
+                feedList
             }
-            .navigationTitle("Главная")
-            .navigationDestination(for: Release.self) {
-                ReleaseDetailView(release: $0)
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: Release.self) { release in
+                ReleaseDetailView(release: release)
                     .environmentObject(session)
             }
-            .navigationDestination(for: InterestingReleaseDestination.self) { dest in
-                ReleaseIDLoaderView(releaseID: dest.releaseID, fallbackTitle: dest.title)
-                    .environmentObject(session)
-            }
-            .navigationDestination(isPresented: $isRandomPresented) {
-                if let randomRelease {
-                    ReleaseDetailView(release: randomRelease)
+            .navigationDestination(for: HomeDestination.self) { dest in
+                switch dest {
+                case .quickSearch:
+                    HomeQuickSearchView()
                         .environmentObject(session)
+                case .notifications:
+                    NotificationsView()
+                case .feedSettings:
+                    InDevelopmentView(
+                        title: "Настройки",
+                        message: "Настройки главной ленты и внешнего вида пока находятся в разработке."
+                    )
+                case .myTabSettings:
+                    InDevelopmentView(
+                        title: "Моя вкладка",
+                        message: "Настройка персональных фильтров для раздела «Моя вкладка» пока находится в разработке."
+                    )
                 }
             }
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    // DEBUG_LOGGER_TEMPORARY
-                    Button {
-                        showLogs = true
-                    } label: {
-                        Label("Логи", systemImage: "ladybug")
-                    }
-
-                    Button {
-                        DebugLogger.log(.nav, "HomeView tap random release")
-                        Task { await openRandomRelease() }
-                    } label: {
-                        Label("Случайное", systemImage: "dice")
-                    }
+            .task(id: selectedTab) {
+                if tabCache[selectedTab] == nil {
+                    await loadTab(selectedTab, page: 0, append: false)
                 }
-            }
-            .sheet(isPresented: $showLogs) {
-                DebugLogsView()
-            }
-            .refreshable {
-                DebugLogger.log(.nav, "HomeView pull-to-refresh")
-                await loadAll(reset: true)
-            }
-            .task {
-                if watching.isEmpty && recommendations.isEmpty {
-                    DebugLogger.log(.nav, "HomeView initial loadAll")
-                    await loadAll(reset: true)
-                }
-            }
-            .alert("Ошибка загрузки", isPresented: Binding(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(errorMessage ?? "")
             }
         }
     }
 
-    private var interestingCarousel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Интересное")
-                .font(.title3.bold())
-                .padding(.horizontal)
+    // MARK: - Top Bar
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
-                    ForEach(interesting) { item in
-                        let actionStr = item.action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                        if let releaseID = Int64(actionStr), releaseID > 0 {
-                            NavigationLink(value: InterestingReleaseDestination(releaseID: releaseID, title: item.title)) {
-                                interestingCard(item)
-                            }
-                            .buttonStyle(.plain)
-                        } else if let extURL = URL(string: actionStr),
-                                  let scheme = extURL.scheme?.lowercased(),
-                                  scheme == "http" || scheme == "https" {
+    private var topSearchBar: some View {
+        HStack(spacing: 10) {
+            NavigationLink(value: HomeDestination.quickSearch) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Text("Поиск аниме")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: HomeDestination.feedSettings) {
+                Image(systemName: "gearshape")
+                    .font(.title3)
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink(value: HomeDestination.notifications) {
+                Image(systemName: "bell")
+                    .font(.title3)
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+                    .overlay(alignment: .topTrailing) {
+                        if session.unreadNotificationsCount > 0 {
+                            Text(session.unreadNotificationsCount > 99 ? "99+" : "\(session.unreadNotificationsCount)")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(accentRed)
+                                .clipShape(Capsule())
+                                .offset(x: 2, y: 1)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+    }
+
+    // MARK: - Section Tabs
+
+    private var tabsStrip: some View {
+        HStack(spacing: 0) {
+            NavigationLink(value: HomeDestination.myTabSettings) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .frame(width: 44, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 20) {
+                        ForEach(HomeFeedTab.allCases) { tab in
+                            let isSelected = (selectedTab == tab)
                             Button {
-                                DebugLogger.log(.nav, "Tap Интересное URL '\(item.title ?? "")' -> \(extURL.absoluteString)")
-                                openURL(extURL)
+                                DebugLogger.log(.nav, "HomeView select tab='\(tab.rawValue)'")
+                                selectedTab = tab
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    proxy.scrollTo(tab, anchor: .center)
+                                }
                             } label: {
-                                interestingCard(item)
+                                VStack(spacing: 8) {
+                                    Text(tab.rawValue)
+                                        .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                                        .foregroundStyle(isSelected ? accentRed : .secondary)
+                                        .lineLimit(1)
+
+                                    Capsule()
+                                        .fill(isSelected ? accentRed : Color.clear)
+                                        .frame(height: 2.5)
+                                }
+                                .padding(.top, 8)
                             }
                             .buttonStyle(.plain)
-                        } else {
-                            interestingCard(item)
+                            .id(tab)
                         }
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.trailing, 14)
                 }
-                .padding(.horizontal)
+                .onAppear {
+                    proxy.scrollTo(selectedTab, anchor: .center)
+                }
+                .onChange(of: selectedTab) { _, newTab in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(newTab, anchor: .center)
+                    }
+                }
             }
         }
     }
 
-    private func interestingCard(_ item: InterestingItem) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            AsyncImage(url: item.imageURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                default:
-                    Color.secondary.opacity(0.2)
-                }
-            }
-            .frame(width: 280, height: 150)
-            .clipped()
+    // MARK: - Feed List
 
-            LinearGradient(
-                colors: [.clear, .black.opacity(0.8)],
-                startPoint: .center,
-                endPoint: .bottom
-            )
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title ?? "")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                if let desc = item.description, !desc.isEmpty {
-                    Text(desc)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.85))
-                        .lineLimit(2)
-                }
-            }
-            .padding(12)
-        }
-        .frame(width: 280, height: 150)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-    }
-
-    private func releaseCarousel(title: String, releases: [Release]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.title3.bold())
-                .padding(.horizontal)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: .top, spacing: 12) {
-                    ForEach(releases) { release in
-                        NavigationLink(value: release) {
-                            ReleasePosterCard(release: release)
+    private var feedList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                if (isLoading || (tabCache[selectedTab] == nil && errorMessage == nil)) && currentItems.isEmpty {
+                    ProgressView("Загрузка...")
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 80)
+                } else if let errorMessage, currentItems.isEmpty {
+                    ContentUnavailableView {
+                        Label("Не удалось загрузить", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("Повторить") {
+                            Task { await loadTab(selectedTab, page: 0, append: false) }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding(.top, 60)
+                } else if currentItems.isEmpty {
+                    ContentUnavailableView(
+                        "Список пуст",
+                        systemImage: "sparkles.tv",
+                        description: Text("Потяните вниз для обновления.")
+                    )
+                    .padding(.top, 60)
+                } else {
+                    ForEach(Array(currentItems.enumerated()), id: \.element.id) { idx, release in
+                        HStack(alignment: .top, spacing: 4) {
+                            NavigationLink(value: release) {
+                                ReleaseRow(release: release)
+                            }
+                            .buttonStyle(.plain)
+
+                            Menu {
+                                ForEach(BookmarkStatus.allCases) { status in
+                                    Button {
+                                        Task { await quickSetBookmark(release: release, status: status) }
+                                    } label: {
+                                        Label(status.title, systemImage: status.systemImage)
+                                    }
+                                }
+                                Divider()
+                                Button {
+                                    Task { await quickToggleFavorite(release: release) }
+                                } label: {
+                                    Label(
+                                        (release.isFavorite ?? false) ? "Убрать из избранного" : "В избранное",
+                                        systemImage: (release.isFavorite ?? false) ? "heart.slash" : "heart"
+                                    )
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .rotationEffect(.degrees(90))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 28, height: 32)
+                                    .contentShape(Rectangle())
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .onAppear {
+                            if idx >= currentItems.count - 3, hasMore, !isLoadingMore {
+                                Task {
+                                    let nextPage = (tabCache[selectedTab]?.page ?? 0) + 1
+                                    await loadTab(selectedTab, page: nextPage, append: true)
+                                }
+                            }
+                        }
+                    }
+
+                    if isLoadingMore {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
                     }
                 }
-                .padding(.horizontal)
             }
+            .padding(.vertical, 12)
+        }
+        .refreshable {
+            DebugLogger.log(.nav, "HomeView pull-to-refresh tab='\(selectedTab.rawValue)'")
+            await loadTab(selectedTab, page: 0, append: false)
         }
     }
 
-    private var recommendationsGrid: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Рекомендации")
-                .font(.title3.bold())
-                .padding(.horizontal)
+    // MARK: - Networking
 
-            LazyVStack(spacing: 10) {
-                ForEach(recommendations) { release in
-                    NavigationLink(value: release) {
-                        ReleaseRow(release: release)
-                            .padding(.horizontal)
-                    }
-                    .buttonStyle(.plain)
+    private func fetchReleases(for tab: HomeFeedTab, page: Int) async throws -> [Release] {
+        switch tab {
+        case .myTab:
+            if session.isAuthenticated {
+                let prev = page == 0 ? -1 : page - 1
+                let recs = try await api.recommendations(page: page, previousPage: prev).content
+                if !recs.isEmpty || page > 0 {
+                    return recs
                 }
-
-                Button("Загрузить ещё") {
-                    Task { await loadMoreRecommendations() }
-                }
-                .buttonStyle(.bordered)
-                .padding(.top, 6)
             }
+            return try await api.filterReleases(page: page, filter: FilterRequest(sort: 2), extendedMode: true).content
+
+        case .anime:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(categoryId: 1, country: "Япония", sort: 0),
+                extendedMode: true
+            ).content
+
+        case .donghua:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(country: "Китай", sort: 0),
+                extendedMode: true
+            ).content
+
+        case .latest:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(sort: 0),
+                extendedMode: true
+            ).content
+
+        case .ongoing:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(sort: 0, statusId: 2),
+                extendedMode: true
+            ).content
+
+        case .announcements:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(sort: 0, statusId: 3),
+                extendedMode: true
+            ).content
+
+        case .completed:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(sort: 0, statusId: 1),
+                extendedMode: true
+            ).content
+
+        case .movies:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(categoryId: 2, sort: 0),
+                extendedMode: true
+            ).content
+
+        case .ova:
+            return try await api.filterReleases(
+                page: page,
+                filter: FilterRequest(categoryId: 3, sort: 0),
+                extendedMode: true
+            ).content
         }
     }
 
-    private func loadAll(reset: Bool) async {
-        isLoading = true
-        defer { isLoading = false }
-
-        let api = self.api
-
-        let interestingTask = Task<PageableResponse<InterestingItem>?, Never> {
-            try? await api.interesting()
+    private func loadTab(_ tab: HomeFeedTab, page: Int, append: Bool) async {
+        if append {
+            guard !isLoadingMore else { return }
+            isLoadingMore = true
+        } else {
+            isLoading = true
+            errorMessage = nil
         }
-        let watchingTask = Task<PageableResponse<Release>?, Never> {
-            try? await api.watching(page: 0)
-        }
-        let discussingTask = Task<PageableResponse<Release>?, Never> {
-            try? await api.discussing()
-        }
-        let recsTask = Task<PageableResponse<Release>?, Never> {
-            try? await api.recommendations(page: 0, previousPage: -1)
-        }
-
         defer {
-            interestingTask.cancel()
-            watchingTask.cancel()
-            discussingTask.cancel()
-            recsTask.cancel()
+            if append {
+                isLoadingMore = false
+            } else {
+                isLoading = false
+            }
         }
 
-        let intResp = await interestingTask.value
-        let watchResp = await watchingTask.value
-        let discResp = await discussingTask.value
-        let recResp = await recsTask.value
+        DebugLogger.log(.nav, "HomeView load tab='\(tab.rawValue)' page=\(page) append=\(append)")
 
-        guard !Task.isCancelled else { return }
+        do {
+            let fetched = try await fetchReleases(for: tab, page: page)
+            guard !Task.isCancelled else { return }
 
-        if let intResp { interesting = intResp.content }
-        if let watchResp { watching = watchResp.content }
-        if let discResp { discussing = discResp.content }
-        if let recResp {
-            recommendations = recResp.content
-            currentRecPage = 0
-        }
+            let merged: [Release]
+            if append, let existing = tabCache[tab]?.items {
+                var seen = Set(existing.map(\.id))
+                let uniqueNew = fetched.filter { seen.insert($0.id).inserted }
+                merged = existing + uniqueNew
+            } else {
+                merged = fetched
+            }
 
-        if watching.isEmpty && recommendations.isEmpty && discussing.isEmpty {
-            do {
-                let fallback = try await api.randomRelease()
-                recommendations = [fallback]
-            } catch {
+            tabCache[tab] = HomeTabPageCache(
+                items: merged,
+                page: page,
+                hasMore: fetched.count >= 20
+            )
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            DebugLogger.log(.ui, "HomeView load error tab='\(tab.rawValue)': \(error.localizedDescription)", level: .error)
+            if !append {
                 errorMessage = error.localizedDescription
             }
         }
     }
 
-    private func loadMoreRecommendations() async {
-        let nextPage = currentRecPage + 1
+    private func quickSetBookmark(release: Release, status: BookmarkStatus) async {
+        guard session.isAuthenticated else {
+            session.infoMessage = "Войдите в аккаунт, чтобы добавлять релизы в списки."
+            return
+        }
         do {
-            let resp = try await api.recommendations(page: nextPage, previousPage: currentRecPage)
-            recommendations.append(contentsOf: resp.content)
-            currentRecPage = nextPage
+            _ = try await api.addToProfileList(status: status, releaseId: release.id)
+            session.infoMessage = "Добавлено в «\(status.title)»."
         } catch {
-            errorMessage = error.localizedDescription
+            session.errorMessage = error.localizedDescription
         }
     }
 
-    private func openRandomRelease() async {
+    private func quickToggleFavorite(release: Release) async {
+        guard session.isAuthenticated else {
+            session.infoMessage = "Войдите в аккаунт, чтобы добавлять релизы в избранное."
+            return
+        }
         do {
-            randomRelease = try await api.randomRelease()
-            isRandomPresented = true
+            if release.isFavorite == true {
+                _ = try await api.deleteFavorite(releaseId: release.id)
+                session.infoMessage = "Убрано из избранного."
+            } else {
+                _ = try await api.addFavorite(releaseId: release.id)
+                session.infoMessage = "Добавлено в избранное."
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            session.errorMessage = error.localizedDescription
         }
     }
 }
 
-private struct ReleaseIDLoaderView: View {
+private struct InDevelopmentView: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Пока в разработке", systemImage: "wrench.and.screwdriver")
+        } description: {
+            Text(message)
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct HomeQuickSearchView: View {
     @EnvironmentObject private var session: SessionStore
-
-    let releaseID: Int64
-    let fallbackTitle: String?
-
-    @State private var loadedRelease: Release?
+    @State private var query = ""
+    @State private var results: [Release] = []
+    @State private var isLoading = false
+    @State private var hasSearched = false
     @State private var errorMessage: String?
 
     private let api = AnixartAPI()
 
     var body: some View {
-        Group {
-            if let loadedRelease {
-                ReleaseDetailView(release: loadedRelease)
-                    .environmentObject(session)
-            } else if let errorMessage {
-                ContentUnavailableView {
-                    Label("Не удалось открыть релиз", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(errorMessage)
-                } actions: {
-                    Button("Повторить") {
-                        Task { await load() }
-                    }
-                    .buttonStyle(.borderedProminent)
+        List {
+            ForEach(results) { release in
+                NavigationLink(value: release) {
+                    ReleaseRow(release: release)
                 }
-                .navigationTitle(fallbackTitle ?? "Релиз")
-                .navigationBarTitleDisplayMode(.inline)
-            } else {
-                ProgressView("Загрузка релиза...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationTitle(fallbackTitle ?? "Релиз")
-                    .navigationBarTitleDisplayMode(.inline)
             }
         }
-        .task(id: releaseID) {
-            if loadedRelease == nil {
-                await load()
+        .listStyle(.plain)
+        .navigationTitle("Поиск аниме")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Название аниме...")
+        .onSubmit(of: .search) {
+            Task { await performSearch() }
+        }
+        .overlay {
+            if isLoading {
+                ProgressView("Поиск...")
+            } else if let errorMessage, results.isEmpty {
+                ContentUnavailableView("Ошибка", systemImage: "exclamationmark.triangle", description: Text(errorMessage))
+            } else if hasSearched && results.isEmpty {
+                ContentUnavailableView("Ничего не найдено", systemImage: "magnifyingglass")
+            } else if !hasSearched {
+                ContentUnavailableView("Введите название аниме", systemImage: "magnifyingglass")
             }
         }
     }
 
-    private func load() async {
+    private func performSearch() async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isLoading = true
         errorMessage = nil
-        DebugLogger.log(.nav, "Tap Интересное -> loading release id=\(releaseID) ('\(fallbackTitle ?? "")')")
+        hasSearched = true
+        defer { isLoading = false }
+        DebugLogger.log(.nav, "HomeQuickSearchView search '\(trimmed)'")
         do {
-            loadedRelease = try await api.release(id: releaseID, extendedMode: true)
+            results = try await api.searchReleases(query: trimmed, page: 0)
         } catch {
-            DebugLogger.log(.ui, "Interesting release load error id=\(releaseID): \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }

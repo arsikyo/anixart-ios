@@ -20,6 +20,9 @@ enum APIError: LocalizedError, Sendable {
             }
             return Self.describe(code: code)
         case .httpStatus(let status):
+            if status == 429 {
+                return "Сервер временно ограничил частоту запросов (429). Подождите пару секунд и повторите."
+            }
             return "Ошибка HTTP: \(status)."
         case .unexpectedResponse:
             return "Неожиданный ответ сервера."
@@ -122,49 +125,80 @@ struct APIClient: Sendable {
             request.httpBody = try JSONEncoder.anixart.encode(AnyEncodable(body))
         }
 
-        let startedAt = Date()
-        DebugLogger.log(.api, "-> \(method.rawValue) \(url.absoluteString)", level: .debug)
+        let canRetryTransient = method == .get
+            || cleanPath.hasPrefix("discover/")
+            || cleanPath.hasPrefix("filter/")
+            || cleanPath.hasPrefix("search/")
+        let maxAttempts = canRetryTransient ? 3 : 1
 
-        do {
-            let (data, response) = try await session.data(for: request)
-            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        var lastError: Error?
+        for attempt in 1...maxAttempts {
+            await APIRateLimitCoordinator.shared.waitIfCoolingDown()
 
-            guard let http = response as? HTTPURLResponse else {
-                DebugLogger.log(.api, "<- NON-HTTP \(url.absoluteString) (\(elapsedMs)ms)", level: .error)
-                throw APIError.unexpectedResponse
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(300))
-                DebugLogger.log(.api, "<- HTTP \(http.statusCode) \(url.absoluteString) (\(elapsedMs)ms, \(data.count)B) body=\(snippet)", level: .error)
-                throw APIError.httpStatus(http.statusCode)
-            }
+            let startedAt = Date()
+            DebugLogger.log(.api, "-> \(method.rawValue) \(url.absoluteString)\(attempt > 1 ? " [retry #\(attempt - 1)]" : "")", level: .debug)
 
             do {
-                let decoded = try JSONDecoder.anixart.decode(Response.self, from: data)
-                if validateStatus, let status = decoded as? APIStatus {
-                    if status.code != 0 {
-                        DebugLogger.log(.api, "<- API code=\(status.code) HTTP \(http.statusCode) \(cleanPath) (\(elapsedMs)ms)", level: .warning)
-                        throw APIError.server(code: status.code)
-                    }
-                    DebugLogger.log(.api, "<- OK HTTP \(http.statusCode) code=0 \(cleanPath) (\(elapsedMs)ms, \(data.count)B)", level: .debug)
-                } else {
-                    DebugLogger.log(.api, "<- OK HTTP \(http.statusCode) \(cleanPath) (\(elapsedMs)ms, \(data.count)B)", level: .debug)
+                let (data, response) = try await session.data(for: request)
+                let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+
+                guard let http = response as? HTTPURLResponse else {
+                    DebugLogger.log(.api, "<- NON-HTTP \(url.absoluteString) (\(elapsedMs)ms)", level: .error)
+                    throw APIError.unexpectedResponse
                 }
-                return decoded
+
+                if http.statusCode == 429 || http.statusCode == 502 || http.statusCode == 503 {
+                    let retryAfterRaw = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+                    let backoffSeconds = min(max(retryAfterRaw ?? (0.9 * Double(attempt)), 0.5), 4.0)
+                    if http.statusCode == 429 {
+                        await APIRateLimitCoordinator.shared.recordRateLimit(delaySeconds: backoffSeconds)
+                    }
+                    let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(300))
+                    DebugLogger.log(.api, "<- HTTP \(http.statusCode) \(url.absoluteString) (\(elapsedMs)ms, \(data.count)B) body=\(snippet)", level: .error)
+                    if attempt < maxAttempts {
+                        try? await Task.sleep(for: .seconds(backoffSeconds))
+                        if Task.isCancelled { throw CancellationError() }
+                        continue
+                    }
+                    throw APIError.httpStatus(http.statusCode)
+                }
+
+                guard (200..<300).contains(http.statusCode) else {
+                    let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(300))
+                    DebugLogger.log(.api, "<- HTTP \(http.statusCode) \(url.absoluteString) (\(elapsedMs)ms, \(data.count)B) body=\(snippet)", level: .error)
+                    throw APIError.httpStatus(http.statusCode)
+                }
+
+                do {
+                    let decoded = try JSONDecoder.anixart.decode(Response.self, from: data)
+                    if validateStatus, let status = decoded as? APIStatus {
+                        if status.code != 0 {
+                            DebugLogger.log(.api, "<- API code=\(status.code) HTTP \(http.statusCode) \(cleanPath) (\(elapsedMs)ms)", level: .warning)
+                            throw APIError.server(code: status.code)
+                        }
+                        DebugLogger.log(.api, "<- OK HTTP \(http.statusCode) code=0 \(cleanPath) (\(elapsedMs)ms, \(data.count)B)", level: .debug)
+                    } else {
+                        DebugLogger.log(.api, "<- OK HTTP \(http.statusCode) \(cleanPath) (\(elapsedMs)ms, \(data.count)B)", level: .debug)
+                    }
+                    return decoded
+                } catch let apiError as APIError {
+                    throw apiError
+                } catch {
+                    let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(350))
+                    DebugLogger.log(.api, "<- DECODE ERROR \(cleanPath): \(error.localizedDescription) | body=\(snippet)", level: .error)
+                    throw APIError.decodingFailed(error.localizedDescription)
+                }
             } catch let apiError as APIError {
+                lastError = apiError
                 throw apiError
             } catch {
-                let snippet = String((String(data: data, encoding: .utf8) ?? "").prefix(350))
-                DebugLogger.log(.api, "<- DECODE ERROR \(cleanPath): \(error.localizedDescription) | body=\(snippet)", level: .error)
-                throw APIError.decodingFailed(error.localizedDescription)
+                lastError = error
+                let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+                DebugLogger.log(.api, "<- NETWORK ERROR \(method.rawValue) \(url.absoluteString) (\(elapsedMs)ms): \(error.localizedDescription)", level: .error)
+                throw error
             }
-        } catch let apiError as APIError {
-            throw apiError
-        } catch {
-            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-            DebugLogger.log(.api, "<- NETWORK ERROR \(method.rawValue) \(url.absoluteString) (\(elapsedMs)ms): \(error.localizedDescription)", level: .error)
-            throw error
         }
+        throw lastError ?? APIError.unexpectedResponse
     }
 
     func fetchRawString(
@@ -267,5 +301,26 @@ extension JSONEncoder {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         return encoder
+    }
+}
+
+private actor APIRateLimitCoordinator {
+    static let shared = APIRateLimitCoordinator()
+    private var cooldownUntil: Date?
+
+    func recordRateLimit(delaySeconds: TimeInterval) {
+        let target = Date().addingTimeInterval(delaySeconds)
+        if let existing = cooldownUntil, existing > target { return }
+        cooldownUntil = target
+    }
+
+    func waitIfCoolingDown() async {
+        guard let cooldownUntil else { return }
+        let remaining = cooldownUntil.timeIntervalSinceNow
+        guard remaining > 0.05 else {
+            self.cooldownUntil = nil
+            return
+        }
+        try? await Task.sleep(for: .seconds(remaining))
     }
 }

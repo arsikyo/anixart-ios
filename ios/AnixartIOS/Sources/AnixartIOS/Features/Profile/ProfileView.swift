@@ -153,7 +153,9 @@ struct ProfileView: View {
                 await reload()
             }
             .task {
-                await reload()
+                if session.currentProfile == nil {
+                    await reload()
+                }
             }
             .sheet(isPresented: $showSettings) {
                 APISettingsView()

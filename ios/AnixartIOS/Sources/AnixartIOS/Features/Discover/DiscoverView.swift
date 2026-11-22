@@ -214,7 +214,7 @@ struct DiscoverView: View {
         case .collections:
             if collections.isEmpty { await loadCollections() }
         case .history:
-            if session.isAuthenticated { await loadHistory() }
+            if session.isAuthenticated && history.isEmpty { await loadHistory() }
         }
     }
 

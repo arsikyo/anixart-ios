@@ -14,6 +14,8 @@ private final class PlayerRuntimeObserver: ObservableObject {
     private weak var observedItem: AVPlayerItem?
     private var cancellables: Set<AnyCancellable> = []
     private var notificationTokens: [NSObjectProtocol] = []
+    private var lastLoggedTimeControlStatus: AVPlayer.TimeControlStatus?
+    private var lastLoggedWaitReason: String?
 
     func configureAudioSession() {
         do {
@@ -85,6 +87,8 @@ private final class PlayerRuntimeObserver: ObservableObject {
         notificationTokens.removeAll()
         observedPlayer = nil
         observedItem = nil
+        lastLoggedTimeControlStatus = nil
+        lastLoggedWaitReason = nil
     }
 
     private func inspectItemStatus() {
@@ -118,15 +122,27 @@ private final class PlayerRuntimeObserver: ObservableObject {
         guard let player = observedPlayer else { return }
         switch player.timeControlStatus {
         case .paused:
-            DebugLogger.log(.player, "AVPlayer.timeControlStatus = .paused", level: .debug)
+            if lastLoggedTimeControlStatus != .paused {
+                lastLoggedTimeControlStatus = .paused
+                lastLoggedWaitReason = nil
+                DebugLogger.log(.player, "AVPlayer.timeControlStatus = .paused", level: .debug)
+            }
         case .waitingToPlayAtSpecifiedRate:
             let reason = player.reasonForWaitingToPlay?.rawValue ?? "unknown"
             statusText = "Буферизация (\(reason))..."
-            DebugLogger.log(.player, "AVPlayer waitingToPlay: reason=\(reason)", level: .debug)
+            if lastLoggedTimeControlStatus != .waitingToPlayAtSpecifiedRate || lastLoggedWaitReason != reason {
+                lastLoggedTimeControlStatus = .waitingToPlayAtSpecifiedRate
+                lastLoggedWaitReason = reason
+                DebugLogger.log(.player, "AVPlayer waitingToPlay: reason=\(reason)", level: .debug)
+            }
         case .playing:
             statusText = "Воспроизведение"
             playbackError = nil
-            DebugLogger.log(.player, "AVPlayer.timeControlStatus = .playing")
+            if lastLoggedTimeControlStatus != .playing {
+                lastLoggedTimeControlStatus = .playing
+                lastLoggedWaitReason = nil
+                DebugLogger.log(.player, "AVPlayer.timeControlStatus = .playing")
+            }
         @unknown default:
             break
         }
@@ -152,6 +168,7 @@ struct VideoPlayerView: View {
     @State private var player: AVPlayer?
     @State private var showLogs = false
     @State private var reloadNonce = 0
+    @State private var isExpandedFullscreen = false
 
     private let parser = VideoParserService()
     private let api = AnixartAPI()
@@ -258,11 +275,33 @@ struct VideoPlayerView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topTrailing) {
+                    if isExpandedFullscreen {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isExpandedFullscreen = false
+                            }
+                        } label: {
+                            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(10)
+                                .background(.black.opacity(0.65))
+                                .clipShape(Circle())
+                        }
+                        .padding(14)
+                    }
+                }
 
-                controlsBar
+                if !isExpandedFullscreen {
+                    controlsBar
+                }
             }
             .navigationTitle("\(release.displayTitle) • \(currentEpisode.displayTitle)")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(isExpandedFullscreen ? .hidden : .visible, for: .navigationBar)
+            .statusBarHidden(isExpandedFullscreen)
+            .ignoresSafeArea(edges: isExpandedFullscreen ? .all : [])
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Закрыть") {
@@ -273,6 +312,14 @@ struct VideoPlayerView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpandedFullscreen.toggle()
+                        }
+                    } label: {
+                        Image(systemName: isExpandedFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    }
+
                     // DEBUG_LOGGER_TEMPORARY
                     Button {
                         showLogs = true
@@ -335,6 +382,7 @@ struct VideoPlayerView: View {
             Spacer()
 
             Button {
+                isLoadingStream = true
                 forceWebPlayer.toggle()
                 DebugLogger.log(.nav, "Player toggle mode -> forceWebPlayer=\(forceWebPlayer)")
             } label: {
@@ -363,6 +411,7 @@ struct VideoPlayerView: View {
     }
 
     private func switchToEpisode(_ episode: Episode) {
+        isLoadingStream = true
         observer.detach()
         player?.pause()
         player = nil
@@ -448,13 +497,34 @@ private struct WebVideoRepresentable: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+        config.allowsAirPlayForMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        config.preferences.isElementFullscreenEnabled = true
+
+        // Обеспечиваем разрешения fullscreen/autoplay для вложенных iframe-плееров
+        let iframeAllowJS = """
+        (function() {
+            function patchIframes() {
+                var frames = document.querySelectorAll('iframe');
+                for (var i = 0; i < frames.length; i++) {
+                    frames[i].setAttribute('allowfullscreen', '');
+                    frames[i].setAttribute('webkitallowfullscreen', '');
+                    frames[i].setAttribute('allow', 'autoplay; fullscreen *; encrypted-media; picture-in-picture');
+                }
+            }
+            patchIframes();
+            new MutationObserver(patchIframes).observe(document.documentElement || document, { childList: true, subtree: true });
+        })();
+        """
+        let script = WKUserScript(source: iframeAllowJS, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        config.userContentController.addUserScript(script)
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.backgroundColor = .black
         webView.isOpaque = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.customUserAgent = headers["User-Agent"]
             ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
         return webView

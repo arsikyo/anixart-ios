@@ -51,8 +51,8 @@ struct ConfigURLsResponse: Decodable, Sendable {
     let consentRequired: Bool?
 }
 
-struct TogglesResponse: Decodable, APIStatus, Sendable {
-    let code: Int
+struct TogglesResponse: Decodable, Sendable {
+    let code: Int?
     let whatsNew: String?
     let downloadLink: String?
     let baseUrl: String?
@@ -126,6 +126,8 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
     let isViewed: Bool?
     let isAdult: Bool?
     let relatedId: Int64?
+    let releaseDate: String?
+    let airedOnDate: Int64?
     let status: ReleaseStatusInfo?
     let category: ReleaseCategoryInfo?
 
@@ -134,7 +136,7 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         case director, author, studio, description, note, grade, rating, voteCount, yourVote
         case episodesReleased, episodesTotal, duration, season, ageRating, broadcast
         case profileListStatus, isFavorite, isPlayDisabled, isViewed, isAdult
-        case relatedId, related, status, category
+        case relatedId, related, releaseDate, airedOnDate, status, category
     }
 
     init(from decoder: Decoder) throws {
@@ -171,6 +173,8 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         let directRelatedId = try c.decodeIfPresent(Int64.self, forKey: .relatedId)
         let relatedObj = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseRelatedRef.self, forKey: .related)
         relatedId = directRelatedId ?? relatedObj?.id
+        releaseDate = try c.decodeIfPresent(String.self, forKey: .releaseDate)
+        airedOnDate = try c.decodeIfPresent(Int64.self, forKey: .airedOnDate)
         status = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseStatusInfo.self, forKey: .status)
         category = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseCategoryInfo.self, forKey: .category)
     }
@@ -207,6 +211,8 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         try c.encodeIfPresent(isViewed, forKey: .isViewed)
         try c.encodeIfPresent(isAdult, forKey: .isAdult)
         try c.encodeIfPresent(relatedId, forKey: .relatedId)
+        try c.encodeIfPresent(releaseDate, forKey: .releaseDate)
+        try c.encodeIfPresent(airedOnDate, forKey: .airedOnDate)
         try c.encodeIfPresent(status, forKey: .status)
         try c.encodeIfPresent(category, forKey: .category)
     }
@@ -235,6 +241,54 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
         let total = episodesTotal.map(String.init) ?? "?"
         return "\(released) / \(total) эп."
     }
+
+    var isAnnouncement: Bool {
+        status?.id == 3 || status?.name?.localizedCaseInsensitiveContains("анонс") == true
+    }
+
+    var compactEpisodeText: String? {
+        if isAnnouncement {
+            if let total = episodesTotal, total > 0 {
+                return "Анонс  \(total) эп"
+            }
+            return "Анонс  ? эп"
+        }
+        if let released = episodesReleased, let total = episodesTotal {
+            if released == total && total > 0 {
+                return "\(total) эп"
+            }
+            return "\(released) из \(total) эп"
+        }
+        if let released = episodesReleased {
+            return "\(released) из ? эп"
+        }
+        if let total = episodesTotal {
+            return "\(total) эп"
+        }
+        return nil
+    }
+
+    var announcementDateText: String? {
+        guard isAnnouncement else { return nil }
+        if let raw = releaseDate?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            return raw
+        }
+        if let ts = airedOnDate, ts > 0 {
+            let date = Date(timeIntervalSince1970: TimeInterval(ts))
+            return Self.announcementFormatter.string(from: date)
+        }
+        if let year = year?.trimmingCharacters(in: .whitespacesAndNewlines), !year.isEmpty {
+            return "\(year) г."
+        }
+        return "скоро"
+    }
+
+    private static let announcementFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "d MMM yyyy 'г.'"
+        return f
+    }()
 }
 
 struct InterestingItem: Decodable, Identifiable, Hashable, Sendable {

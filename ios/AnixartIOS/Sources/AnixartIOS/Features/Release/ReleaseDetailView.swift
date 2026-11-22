@@ -10,6 +10,7 @@ struct ReleaseDetailView: View {
     @ObservedObject private var session = SessionStore.shared
 
     let release: Release
+    var prefetchedFullRelease: Bool = false
 
     @State private var fullRelease: Release?
     @State private var voiceovers: [VoiceoverType] = []
@@ -28,6 +29,7 @@ struct ReleaseDetailView: View {
     @State private var newCommentText = ""
     @State private var isSpoilerComment = false
     @State private var isSubmittingComment = false
+    @State private var episodesError: String?
     @State private var alertMessage: String?
     @State private var showLogs = false
 
@@ -277,10 +279,27 @@ struct ReleaseDetailView: View {
                     .foregroundStyle(.secondary)
             } else if isLoadingDetails && voiceovers.isEmpty {
                 ProgressView("Загрузка озвучек...")
+            } else if let episodesError, voiceovers.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Не удалось загрузить озвучки: \(episodesError)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button("Повторить загрузку серий") {
+                        DebugLogger.log(.nav, "Retry loadAll episodes for release=\(release.id)")
+                        Task { await loadAll() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             } else if voiceovers.isEmpty {
-                Text("Озвучки пока недоступны.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Озвучки пока недоступны.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button("Обновить") {
+                        Task { await loadAll() }
+                    }
+                    .buttonStyle(.bordered)
+                }
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -451,29 +470,40 @@ struct ReleaseDetailView: View {
 
     private func loadAll() async {
         isLoadingDetails = true
+        episodesError = nil
         defer { isLoadingDetails = false }
 
         let api = self.api
         let releaseId = release.id
+        let needsFullDetail = !prefetchedFullRelease
 
-        let detailTask = Task<Release?, Never> {
+        let detailTask: Task<Release?, Never>? = needsFullDetail ? Task {
             try? await api.release(id: releaseId, extendedMode: true)
-        }
-        let typesTask = Task<[VoiceoverType]?, Never> {
-            try? await api.episodeTypes(releaseId: releaseId)
+        } : nil
+        let typesTask = Task<Result<[VoiceoverType], Error>, Never> {
+            do {
+                return .success(try await api.episodeTypes(releaseId: releaseId))
+            } catch {
+                return .failure(error)
+            }
         }
         let commentsTask = Task<PageableResponse<ReleaseComment>?, Never> {
             try? await api.releaseComments(releaseId: releaseId, page: 0)
         }
 
         defer {
-            detailTask.cancel()
+            detailTask?.cancel()
             typesTask.cancel()
             commentsTask.cancel()
         }
 
-        let detailed = await detailTask.value
-        let loadedTypes = await typesTask.value ?? []
+        let detailed: Release?
+        if let detailTask {
+            detailed = await detailTask.value
+        } else {
+            detailed = nil
+        }
+        let typesResult = await typesTask.value
         let loadedComments = (await commentsTask.value)?.content ?? []
 
         guard !Task.isCancelled else { return }
@@ -481,6 +511,17 @@ struct ReleaseDetailView: View {
         if let detailed {
             fullRelease = detailed
         }
+
+        let loadedTypes: [VoiceoverType]
+        switch typesResult {
+        case .success(let types):
+            loadedTypes = types
+        case .failure(let error):
+            loadedTypes = []
+            episodesError = error.localizedDescription
+            DebugLogger.log(.ui, "loadAll episodeTypes error id=\(releaseId): \(error.localizedDescription)", level: .error)
+        }
+
         voiceovers = loadedTypes
         comments = loadedComments
 
