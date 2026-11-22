@@ -436,27 +436,45 @@ struct ReleaseDetailView: View {
         isLoadingDetails = true
         defer { isLoadingDetails = false }
 
-        async let detailTask = try? api.release(id: release.id, extendedMode: true)
-        async let typesTask = try? api.episodeTypes(releaseId: release.id)
-        async let commentsTask = try? api.releaseComments(releaseId: release.id, page: 0)
+        let api = self.api
+        let releaseId = release.id
 
-        if let detailed = await detailTask {
+        let detailTask = Task<Release?, Never> {
+            try? await api.release(id: releaseId, extendedMode: true)
+        }
+        let typesTask = Task<[VoiceoverType]?, Never> {
+            try? await api.episodeTypes(releaseId: releaseId)
+        }
+        let commentsTask = Task<PageableResponse<ReleaseComment>?, Never> {
+            try? await api.releaseComments(releaseId: releaseId, page: 0)
+        }
+
+        defer {
+            detailTask.cancel()
+            typesTask.cancel()
+            commentsTask.cancel()
+        }
+
+        let detailed = await detailTask.value
+        let loadedTypes = await typesTask.value ?? []
+        let loadedComments = (await commentsTask.value)?.content ?? []
+
+        guard !Task.isCancelled else { return }
+
+        if let detailed {
             fullRelease = detailed
-            if let relatedId = detailed.relatedId, relatedId > 0 {
-                relatedReleases = (try? await api.related(relatedId: relatedId, page: 0).content) ?? []
-            }
-        } else if let relatedId = release.relatedId, relatedId > 0 {
+        }
+        voiceovers = loadedTypes
+        comments = loadedComments
+
+        if let relatedId = (detailed?.relatedId ?? release.relatedId), relatedId > 0 {
             relatedReleases = (try? await api.related(relatedId: relatedId, page: 0).content) ?? []
         }
 
-        let loadedTypes = await typesTask ?? []
-        voiceovers = loadedTypes
         if let firstType = loadedTypes.first {
             selectedVoiceover = firstType
             await loadSources(for: firstType)
         }
-
-        comments = (await commentsTask)?.content ?? []
     }
 
     private func loadSources(for voiceover: VoiceoverType) async {

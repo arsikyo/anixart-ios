@@ -192,15 +192,39 @@ struct HomeView: View {
         isLoading = true
         defer { isLoading = false }
 
-        async let interestingTask = try? api.interesting()
-        async let watchingTask = try? api.watching(page: 0)
-        async let discussingTask = try? api.discussing()
-        async let recsTask = try? api.recommendations(page: 0, previousPage: -1)
+        let api = self.api
 
-        if let intResp = await interestingTask { interesting = intResp.content }
-        if let watchResp = await watchingTask { watching = watchResp.content }
-        if let discResp = await discussingTask { discussing = discResp.content }
-        if let recResp = await recsTask {
+        let interestingTask = Task<PageableResponse<InterestingItem>?, Never> {
+            try? await api.interesting()
+        }
+        let watchingTask = Task<PageableResponse<Release>?, Never> {
+            try? await api.watching(page: 0)
+        }
+        let discussingTask = Task<PageableResponse<Release>?, Never> {
+            try? await api.discussing()
+        }
+        let recsTask = Task<PageableResponse<Release>?, Never> {
+            try? await api.recommendations(page: 0, previousPage: -1)
+        }
+
+        defer {
+            interestingTask.cancel()
+            watchingTask.cancel()
+            discussingTask.cancel()
+            recsTask.cancel()
+        }
+
+        let intResp = await interestingTask.value
+        let watchResp = await watchingTask.value
+        let discResp = await discussingTask.value
+        let recResp = await recsTask.value
+
+        guard !Task.isCancelled else { return }
+
+        if let intResp { interesting = intResp.content }
+        if let watchResp { watching = watchResp.content }
+        if let discResp { discussing = discResp.content }
+        if let recResp {
             recommendations = recResp.content
             currentRecPage = 0
         }
