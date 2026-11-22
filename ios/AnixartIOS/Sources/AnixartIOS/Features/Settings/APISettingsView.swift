@@ -1,8 +1,9 @@
 import SwiftUI
 
+@MainActor
 struct APISettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var session: SessionStore
+    @ObservedObject private var session = SessionStore.shared
 
     @State private var baseURLText = APIConfiguration.baseURL.absoluteString
     @State private var isRefreshing = false

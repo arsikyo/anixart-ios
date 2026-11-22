@@ -3,9 +3,10 @@ import AVKit
 import SwiftUI
 import WebKit
 
+@MainActor
 struct VideoPlayerView: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var session: SessionStore
+    @ObservedObject private var session = SessionStore.shared
 
     let release: Release
     let source: VideoSource

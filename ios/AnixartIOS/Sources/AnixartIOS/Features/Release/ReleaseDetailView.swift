@@ -5,8 +5,9 @@ private struct PlaybackTarget: Identifiable {
     var id: String { episode.stableId }
 }
 
+@MainActor
 struct ReleaseDetailView: View {
-    @EnvironmentObject private var session: SessionStore
+    @ObservedObject private var session = SessionStore.shared
 
     let release: Release
 
@@ -61,6 +62,7 @@ struct ReleaseDetailView: View {
                 ) { watchedPosition in
                     markLocalEpisodeWatched(position: watchedPosition, watched: true)
                 }
+                .environmentObject(session)
             } else {
                 VideoPlayerView(
                     release: current,
@@ -70,6 +72,7 @@ struct ReleaseDetailView: View {
                 ) { watchedPosition in
                     markLocalEpisodeWatched(position: watchedPosition, watched: true)
                 }
+                .environmentObject(session)
             }
         }
         .alert("Сообщение", isPresented: Binding(
@@ -199,12 +202,15 @@ struct ReleaseDetailView: View {
                         }
                     }
                 } label: {
-                    let activeStatus = current.profileListStatus.flatMap(BookmarkStatus.init(rawValue:))
-                    Label(activeStatus?.title ?? "В список", systemImage: activeStatus?.systemImage ?? "bookmark")
+                    Label(activeBookmarkStatus?.title ?? "В список", systemImage: activeBookmarkStatus?.systemImage ?? "bookmark")
                 }
                 .buttonStyle(.bordered)
             }
         }
+    }
+
+    private var activeBookmarkStatus: BookmarkStatus? {
+        current.profileListStatus.flatMap(BookmarkStatus.init(rawValue:))
     }
 
     private var ratingSection: some View {

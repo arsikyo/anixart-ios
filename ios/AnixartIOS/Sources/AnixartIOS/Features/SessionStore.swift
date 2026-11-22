@@ -8,6 +8,8 @@ enum PendingVerificationFlow: Equatable {
 
 @MainActor
 final class SessionStore: ObservableObject {
+    static let shared = SessionStore()
+
     @Published private(set) var isAuthenticated = KeychainStore.getToken() != nil
     @Published var isGuestMode = false
     @Published private(set) var currentProfile: Profile?

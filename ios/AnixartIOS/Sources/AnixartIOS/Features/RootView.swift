@@ -17,6 +17,7 @@ struct RootView: View {
         )) { item in
             NavigationStack {
                 DeepLinkReleaseLoaderView(releaseID: item.id)
+                    .environmentObject(session)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Закрыть") { session.deepLinkedReleaseID = nil }

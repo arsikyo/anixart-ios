@@ -110,9 +110,18 @@ struct SearchView: View {
                     Task { await applyFilter() }
                 }
             }
-            .navigationDestination(for: Release.self) { ReleaseDetailView(release: $0) }
-            .navigationDestination(for: CollectionItem.self) { CollectionDetailView(collection: $0) }
-            .navigationDestination(for: Profile.self) { OtherProfileView(profileID: $0.id) }
+            .navigationDestination(for: Release.self) {
+                ReleaseDetailView(release: $0)
+                    .environmentObject(SessionStore.shared)
+            }
+            .navigationDestination(for: CollectionItem.self) {
+                CollectionDetailView(collection: $0)
+                    .environmentObject(SessionStore.shared)
+            }
+            .navigationDestination(for: Profile.self) {
+                OtherProfileView(profileID: $0.id)
+                    .environmentObject(SessionStore.shared)
+            }
             .alert("Ошибка", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }

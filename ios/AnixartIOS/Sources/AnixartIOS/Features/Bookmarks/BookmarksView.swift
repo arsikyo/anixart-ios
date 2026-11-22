@@ -97,7 +97,10 @@ struct BookmarksView: View {
                 }
             }
             .navigationTitle("Закладки")
-            .navigationDestination(for: Release.self) { ReleaseDetailView(release: $0) }
+            .navigationDestination(for: Release.self) {
+                ReleaseDetailView(release: $0)
+                    .environmentObject(session)
+            }
             .task(id: selectedTab) {
                 if session.isAuthenticated {
                     await load(page: 0, append: false)

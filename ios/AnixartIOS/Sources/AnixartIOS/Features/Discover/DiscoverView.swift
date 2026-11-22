@@ -58,8 +58,14 @@ struct DiscoverView: View {
                 }
             }
             .navigationTitle("Обзор")
-            .navigationDestination(for: Release.self) { ReleaseDetailView(release: $0) }
-            .navigationDestination(for: CollectionItem.self) { CollectionDetailView(collection: $0) }
+            .navigationDestination(for: Release.self) {
+                ReleaseDetailView(release: $0)
+                    .environmentObject(session)
+            }
+            .navigationDestination(for: CollectionItem.self) {
+                CollectionDetailView(collection: $0)
+                    .environmentObject(session)
+            }
             .task(id: section) {
                 await loadCurrentSection()
             }

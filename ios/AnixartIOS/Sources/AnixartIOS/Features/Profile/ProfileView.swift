@@ -249,8 +249,9 @@ struct OtherProfileView: View {
     }
 }
 
+@MainActor
 struct NotificationsView: View {
-    @EnvironmentObject private var session: SessionStore
+    @ObservedObject private var session = SessionStore.shared
 
     @State private var items: [ProfileNotification] = []
     @State private var currentPage = 0
@@ -300,7 +301,10 @@ struct NotificationsView: View {
                 ContentUnavailableView("Уведомлений нет", systemImage: "bell.slash")
             }
         }
-        .navigationDestination(for: Release.self) { ReleaseDetailView(release: $0) }
+        .navigationDestination(for: Release.self) {
+            ReleaseDetailView(release: $0)
+                .environmentObject(session)
+        }
         .task {
             await load(page: 0)
         }

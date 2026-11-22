@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct AnixartIOSApp: App {
-    @StateObject private var session = SessionStore()
+    @StateObject private var session = SessionStore.shared
 
     var body: some Scene {
         WindowGroup {

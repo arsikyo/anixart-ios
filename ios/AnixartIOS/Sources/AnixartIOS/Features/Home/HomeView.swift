@@ -56,10 +56,14 @@ struct HomeView: View {
                 .padding(.vertical)
             }
             .navigationTitle("Главная")
-            .navigationDestination(for: Release.self) { ReleaseDetailView(release: $0) }
+            .navigationDestination(for: Release.self) {
+                ReleaseDetailView(release: $0)
+                    .environmentObject(session)
+            }
             .navigationDestination(isPresented: $isRandomPresented) {
                 if let randomRelease {
                     ReleaseDetailView(release: randomRelease)
+                        .environmentObject(session)
                 }
             }
             .toolbar {
