@@ -1,6 +1,12 @@
 import SwiftUI
 
+private struct InterestingReleaseDestination: Hashable {
+    let releaseID: Int64
+    let title: String?
+}
+
 struct HomeView: View {
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var session: SessionStore
 
     @State private var watching: [Release] = []
@@ -61,6 +67,10 @@ struct HomeView: View {
                 ReleaseDetailView(release: $0)
                     .environmentObject(session)
             }
+            .navigationDestination(for: InterestingReleaseDestination.self) { dest in
+                ReleaseIDLoaderView(releaseID: dest.releaseID, fallbackTitle: dest.title)
+                    .environmentObject(session)
+            }
             .navigationDestination(isPresented: $isRandomPresented) {
                 if let randomRelease {
                     ReleaseDetailView(release: randomRelease)
@@ -117,45 +127,67 @@ struct HomeView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 12) {
                     ForEach(interesting) { item in
-                        ZStack(alignment: .bottomLeading) {
-                            AsyncImage(url: item.imageURL) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image.resizable().scaledToFill()
-                                default:
-                                    Color.secondary.opacity(0.2)
-                                }
+                        let actionStr = item.action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        if let releaseID = Int64(actionStr), releaseID > 0 {
+                            NavigationLink(value: InterestingReleaseDestination(releaseID: releaseID, title: item.title)) {
+                                interestingCard(item)
                             }
-                            .frame(width: 280, height: 150)
-                            .clipped()
-
-                            LinearGradient(
-                                colors: [.clear, .black.opacity(0.8)],
-                                startPoint: .center,
-                                endPoint: .bottom
-                            )
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title ?? "")
-                                    .font(.headline)
-                                    .foregroundStyle(.white)
-                                    .lineLimit(1)
-                                if let desc = item.description, !desc.isEmpty {
-                                    Text(desc)
-                                        .font(.caption)
-                                        .foregroundStyle(.white.opacity(0.85))
-                                        .lineLimit(2)
-                                }
+                            .buttonStyle(.plain)
+                        } else if let extURL = URL(string: actionStr),
+                                  let scheme = extURL.scheme?.lowercased(),
+                                  scheme == "http" || scheme == "https" {
+                            Button {
+                                DebugLogger.log(.nav, "Tap Интересное URL '\(item.title ?? "")' -> \(extURL.absoluteString)")
+                                openURL(extURL)
+                            } label: {
+                                interestingCard(item)
                             }
-                            .padding(12)
+                            .buttonStyle(.plain)
+                        } else {
+                            interestingCard(item)
                         }
-                        .frame(width: 280, height: 150)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                 }
                 .padding(.horizontal)
             }
         }
+    }
+
+    private func interestingCard(_ item: InterestingItem) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            AsyncImage(url: item.imageURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                default:
+                    Color.secondary.opacity(0.2)
+                }
+            }
+            .frame(width: 280, height: 150)
+            .clipped()
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.8)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title ?? "")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                if let desc = item.description, !desc.isEmpty {
+                    Text(desc)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(2)
+                }
+            }
+            .padding(12)
+        }
+        .frame(width: 280, height: 150)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
     private func releaseCarousel(title: String, releases: [Release]) -> some View {
@@ -269,6 +301,61 @@ struct HomeView: View {
             randomRelease = try await api.randomRelease()
             isRandomPresented = true
         } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ReleaseIDLoaderView: View {
+    @EnvironmentObject private var session: SessionStore
+
+    let releaseID: Int64
+    let fallbackTitle: String?
+
+    @State private var loadedRelease: Release?
+    @State private var errorMessage: String?
+
+    private let api = AnixartAPI()
+
+    var body: some View {
+        Group {
+            if let loadedRelease {
+                ReleaseDetailView(release: loadedRelease)
+                    .environmentObject(session)
+            } else if let errorMessage {
+                ContentUnavailableView {
+                    Label("Не удалось открыть релиз", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(errorMessage)
+                } actions: {
+                    Button("Повторить") {
+                        Task { await load() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .navigationTitle(fallbackTitle ?? "Релиз")
+                .navigationBarTitleDisplayMode(.inline)
+            } else {
+                ProgressView("Загрузка релиза...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .navigationTitle(fallbackTitle ?? "Релиз")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .task(id: releaseID) {
+            if loadedRelease == nil {
+                await load()
+            }
+        }
+    }
+
+    private func load() async {
+        errorMessage = nil
+        DebugLogger.log(.nav, "Tap Интересное -> loading release id=\(releaseID) ('\(fallbackTitle ?? "")')")
+        do {
+            loadedRelease = try await api.release(id: releaseID, extendedMode: true)
+        } catch {
+            DebugLogger.log(.ui, "Interesting release load error id=\(releaseID): \(error.localizedDescription)", level: .error)
             errorMessage = error.localizedDescription
         }
     }

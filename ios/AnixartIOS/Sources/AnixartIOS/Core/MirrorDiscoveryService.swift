@@ -10,8 +10,18 @@ struct MirrorDiscoveryResult: Sendable {
 struct MirrorDiscoveryService: Sendable {
     private let client: APIClient
 
-    init(client: APIClient = APIClient()) {
-        self.client = client
+    init(client: APIClient? = nil) {
+        if let client {
+            self.client = client
+        } else {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 7
+            config.timeoutIntervalForResource = 12
+            config.httpAdditionalHeaders = [
+                "User-Agent": "AnixartApp/10.5 (iOS; SwiftUI)"
+            ]
+            self.client = APIClient(session: URLSession(configuration: config))
+        }
     }
 
     /// Повторяет цепочку ChainedNetFetcher из Android:
@@ -21,11 +31,12 @@ struct MirrorDiscoveryService: Sendable {
     func syncConfiguration() async -> MirrorDiscoveryResult {
         var collectedURLs: [String] = []
         var configResponse: ConfigURLsResponse?
+        var workingBaseURL: URL?
 
         let candidates = Array(NSOrderedSet(array: [
             APIConfiguration.baseURL.absoluteString,
-            APIConfiguration.primaryBaseURL.absoluteString,
-            APIConfiguration.fallbackMirrorURL.absoluteString
+            APIConfiguration.fallbackMirrorURL.absoluteString,
+            APIConfiguration.primaryBaseURL.absoluteString
         ]).compactMap { $0 as? String })
 
         for candidate in candidates {
@@ -40,10 +51,15 @@ struct MirrorDiscoveryService: Sendable {
                 validateStatus: false
             ) {
                 configResponse = resp
+                workingBaseURL = url
                 collectedURLs.append(contentsOf: resp.apiUrls)
                 APIConfiguration.shouldUseMirrorURLs = resp.shouldUseMirrorUrls
                 if let staticDomain = resp.staticDomain, !staticDomain.isEmpty {
                     APIConfiguration.staticDomain = staticDomain
+                }
+                if url.absoluteString != APIConfiguration.baseURL.absoluteString {
+                    try? APIConfiguration.setBaseURL(url.absoluteString)
+                    DebugLogger.log(.app, "Switched active baseURL to working mirror: \(url.absoluteString)")
                 }
                 break
             }
@@ -55,8 +71,8 @@ struct MirrorDiscoveryService: Sendable {
 
         if collectedURLs.isEmpty {
             collectedURLs = [
-                APIConfiguration.primaryBaseURL.absoluteString,
-                APIConfiguration.fallbackMirrorURL.absoluteString
+                APIConfiguration.fallbackMirrorURL.absoluteString,
+                APIConfiguration.primaryBaseURL.absoluteString
             ]
         }
 
@@ -74,6 +90,7 @@ struct MirrorDiscoveryService: Sendable {
                 "is_beta": String(APIConfiguration.isBeta),
                 "is_api_alt": String(APIConfiguration.shouldUseMirrorURLs)
             ],
+            overrideBaseURL: workingBaseURL,
             validateStatus: false
         )
 
@@ -89,6 +106,9 @@ struct MirrorDiscoveryService: Sendable {
             }
             if let kodikURL = toggles.kodikVideoLinksUrl, !kodikURL.isEmpty {
                 APIConfiguration.kodikVideoLinksURL = kodikURL
+            }
+            if let iframeURL = toggles.iframeEmbedUrl, !iframeURL.isEmpty {
+                APIConfiguration.iframeEmbedURL = iframeURL
             }
         }
 

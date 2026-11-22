@@ -91,6 +91,10 @@ struct ReleaseCategoryInfo: Codable, Hashable, Sendable {
     let name: String?
 }
 
+private struct ReleaseRelatedRef: Decodable {
+    let id: Int64?
+}
+
 struct Release: Codable, Identifiable, Hashable, Sendable {
     let id: Int64
     let titleRu: String?
@@ -124,6 +128,88 @@ struct Release: Codable, Identifiable, Hashable, Sendable {
     let relatedId: Int64?
     let status: ReleaseStatusInfo?
     let category: ReleaseCategoryInfo?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, titleRu, titleOriginal, titleAlt, image, poster, year, genres, country
+        case director, author, studio, description, note, grade, rating, voteCount, yourVote
+        case episodesReleased, episodesTotal, duration, season, ageRating, broadcast
+        case profileListStatus, isFavorite, isPlayDisabled, isViewed, isAdult
+        case relatedId, related, status, category
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        titleRu = try c.decodeIfPresent(String.self, forKey: .titleRu)
+        titleOriginal = try c.decodeIfPresent(String.self, forKey: .titleOriginal)
+        titleAlt = try c.decodeIfPresent(String.self, forKey: .titleAlt)
+        image = try c.decodeIfPresent(String.self, forKey: .image)
+        poster = try c.decodeIfPresent(String.self, forKey: .poster)
+        year = try c.decodeIfPresent(String.self, forKey: .year)
+        genres = try c.decodeIfPresent(String.self, forKey: .genres)
+        country = try c.decodeIfPresent(String.self, forKey: .country)
+        director = try c.decodeIfPresent(String.self, forKey: .director)
+        author = try c.decodeIfPresent(String.self, forKey: .author)
+        studio = try c.decodeIfPresent(String.self, forKey: .studio)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        grade = try c.decodeIfPresent(Double.self, forKey: .grade)
+        rating = try c.decodeIfPresent(Double.self, forKey: .rating)
+        voteCount = try c.decodeIfPresent(Int.self, forKey: .voteCount)
+        yourVote = try c.decodeIfPresent(Int.self, forKey: .yourVote)
+        episodesReleased = try c.decodeIfPresent(Int.self, forKey: .episodesReleased)
+        episodesTotal = try c.decodeIfPresent(Int.self, forKey: .episodesTotal)
+        duration = try c.decodeIfPresent(Int.self, forKey: .duration)
+        season = try c.decodeIfPresent(Int.self, forKey: .season)
+        ageRating = try c.decodeIfPresent(Int.self, forKey: .ageRating)
+        broadcast = try c.decodeIfPresent(Int.self, forKey: .broadcast)
+        profileListStatus = try c.decodeIfPresent(Int.self, forKey: .profileListStatus)
+        isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite)
+        isPlayDisabled = try c.decodeIfPresent(Bool.self, forKey: .isPlayDisabled)
+        isViewed = try c.decodeIfPresent(Bool.self, forKey: .isViewed)
+        isAdult = try c.decodeIfPresent(Bool.self, forKey: .isAdult)
+        let directRelatedId = try c.decodeIfPresent(Int64.self, forKey: .relatedId)
+        let relatedObj = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseRelatedRef.self, forKey: .related)
+        relatedId = directRelatedId ?? relatedObj?.id
+        status = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseStatusInfo.self, forKey: .status)
+        category = try c.decodeObjectOrIgnoreRefIfPresent(ReleaseCategoryInfo.self, forKey: .category)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(titleRu, forKey: .titleRu)
+        try c.encodeIfPresent(titleOriginal, forKey: .titleOriginal)
+        try c.encodeIfPresent(titleAlt, forKey: .titleAlt)
+        try c.encodeIfPresent(image, forKey: .image)
+        try c.encodeIfPresent(poster, forKey: .poster)
+        try c.encodeIfPresent(year, forKey: .year)
+        try c.encodeIfPresent(genres, forKey: .genres)
+        try c.encodeIfPresent(country, forKey: .country)
+        try c.encodeIfPresent(director, forKey: .director)
+        try c.encodeIfPresent(author, forKey: .author)
+        try c.encodeIfPresent(studio, forKey: .studio)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(note, forKey: .note)
+        try c.encodeIfPresent(grade, forKey: .grade)
+        try c.encodeIfPresent(rating, forKey: .rating)
+        try c.encodeIfPresent(voteCount, forKey: .voteCount)
+        try c.encodeIfPresent(yourVote, forKey: .yourVote)
+        try c.encodeIfPresent(episodesReleased, forKey: .episodesReleased)
+        try c.encodeIfPresent(episodesTotal, forKey: .episodesTotal)
+        try c.encodeIfPresent(duration, forKey: .duration)
+        try c.encodeIfPresent(season, forKey: .season)
+        try c.encodeIfPresent(ageRating, forKey: .ageRating)
+        try c.encodeIfPresent(broadcast, forKey: .broadcast)
+        try c.encodeIfPresent(profileListStatus, forKey: .profileListStatus)
+        try c.encodeIfPresent(isFavorite, forKey: .isFavorite)
+        try c.encodeIfPresent(isPlayDisabled, forKey: .isPlayDisabled)
+        try c.encodeIfPresent(isViewed, forKey: .isViewed)
+        try c.encodeIfPresent(isAdult, forKey: .isAdult)
+        try c.encodeIfPresent(relatedId, forKey: .relatedId)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encodeIfPresent(category, forKey: .category)
+    }
 
     var displayTitle: String {
         if let ru = titleRu, !ru.isEmpty { return ru }

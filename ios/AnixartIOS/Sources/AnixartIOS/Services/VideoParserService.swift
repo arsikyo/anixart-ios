@@ -11,6 +11,21 @@ struct VideoParseResult: Sendable {
     let headers: [String: String]
     let useWebFallback: Bool
     let originalURL: URL
+    let webURL: URL
+
+    init(
+        variants: [VideoStreamVariant],
+        headers: [String: String],
+        useWebFallback: Bool,
+        originalURL: URL,
+        webURL: URL? = nil
+    ) {
+        self.variants = variants
+        self.headers = headers
+        self.useWebFallback = useWebFallback
+        self.originalURL = originalURL
+        self.webURL = webURL ?? originalURL
+    }
 }
 
 struct VideoParserService: Sendable {
@@ -37,8 +52,9 @@ struct VideoParserService: Sendable {
         }
 
         if forceWeb {
-            DebugLogger.log(.parser, "forceWeb=true -> opening \(url.absoluteString) in WKWebView")
-            return VideoParseResult(variants: [], headers: [:], useWebFallback: true, originalURL: url)
+            let wrapped = makeWebURL(for: url)
+            DebugLogger.log(.parser, "forceWeb=true -> opening \(wrapped.absoluteString) in WKWebView")
+            return VideoParseResult(variants: [], headers: [:], useWebFallback: true, originalURL: url, webURL: wrapped)
         }
 
         if host.contains("kodik") || host.contains("aniqit") || host.contains("anivod") || host.contains("kodikres") {
@@ -95,107 +111,196 @@ struct VideoParserService: Sendable {
         }
 
         // Fallback во встроенный WebView-плеер, если хостинг неизвестен или прямой парсинг не вернул потоки
-        DebugLogger.log(.parser, "Returning WebFallback for \(url.absoluteString)", level: .warning)
-        return VideoParseResult(variants: [], headers: [:], useWebFallback: true, originalURL: url)
+        let wrappedWebURL = makeWebURL(for: url)
+        DebugLogger.log(.parser, "Returning WebFallback for \(wrappedWebURL.absoluteString)", level: .warning)
+        return VideoParseResult(variants: [], headers: [:], useWebFallback: true, originalURL: url, webURL: wrappedWebURL)
+    }
+
+    private func makeWebURL(for url: URL) -> URL {
+        let host = url.host?.lowercased() ?? ""
+        let anixmiraiSupportedHosts: Set<String> = [
+            "kodik.info",
+            "aniqit.com",
+            "anivod.com",
+            "kodikplayer.com",
+            "devon.allohastream.com",
+            "sovetromantica.com",
+            "vkvideo.ru",
+            "anixart.libria.fun"
+        ]
+        guard anixmiraiSupportedHosts.contains(host) else { return url }
+
+        let base = APIConfiguration.iframeEmbedURL
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&+=?")
+        let encoded = url.absoluteString.addingPercentEncoding(withAllowedCharacters: allowed) ?? url.absoluteString
+        return URL(string: "\(base)\(encoded)") ?? url
     }
 
     // MARK: - Kodik
 
     private func parseKodik(url: URL) async -> VideoParseResult? {
-        let raw = url.absoluteString
-        let parts = raw.components(separatedBy: "d=")
-        let rawLinkPart = (parts.first ?? raw)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "https://", with: "//")
-            .replacingOccurrences(of: "http://", with: "//")
-        let domainPart: String
-        if parts.count >= 2 {
-            domainPart = parts[1].components(separatedBy: "&").first ?? parts[1]
-        } else {
-            domainPart = "anixart-app.com"
-        }
-
-        let endpointString = APIConfiguration.kodikVideoLinksURL
-        guard var components = URLComponents(string: endpointString) else {
-            DebugLogger.log(.parser, "Kodik: invalid endpointString '\(endpointString)'", level: .error)
-            return nil
-        }
-        var queryItems = components.queryItems ?? []
-        if !queryItems.contains(where: { $0.name == "p" }) {
-            queryItems.append(URLQueryItem(name: "p", value: "56a768d08f43091901c44b54fe970049"))
-        }
-        queryItems.append(URLQueryItem(name: "link", value: rawLinkPart))
-        queryItems.append(URLQueryItem(name: "d", value: domainPart))
-        components.queryItems = queryItems
-
-        guard let apiURL = components.url else {
-            DebugLogger.log(.parser, "Kodik: failed to build apiURL", level: .error)
-            return nil
-        }
-
-        let resp: (body: String, headers: [String: String], statusCode: Int)
+        let pageResp: (body: String, headers: [String: String], statusCode: Int)
         do {
-            resp = try await client.fetchRawString(
-                url: apiURL,
+            pageResp = try await client.fetchRawString(
+                url: url,
                 headers: [
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                    "User-Agent": defaultUserAgent,
+                    "Referer": "https://anixart-app.com/"
                 ]
             )
         } catch {
-            DebugLogger.log(.parser, "Kodik request failed: \(error.localizedDescription)", level: .error)
+            DebugLogger.log(.parser, "Kodik embed fetch failed: \(error.localizedDescription)", level: .error)
             return nil
         }
 
-        guard !resp.body.isEmpty else {
-            DebugLogger.log(.parser, "Kodik empty response body (HTTP \(resp.statusCode))", level: .error)
+        let html = pageResp.body
+        guard !html.isEmpty,
+              let urlParamsJSON = firstMatch("var\\s+urlParams\\s*=\\s*'(\\{.*?\\})'", in: html)
+                ?? firstMatch("var\\s+urlParams\\s*=\\s*\"(\\{.*?\\})\"", in: html),
+              let urlParamsData = urlParamsJSON.data(using: .utf8),
+              let urlParams = try? JSONSerialization.jsonObject(with: urlParamsData) as? [String: Any] else {
+            let snippet = String(html.prefix(300))
+            DebugLogger.log(.parser, "Kodik: failed to extract urlParams (HTTP \(pageResp.statusCode)): \(snippet)", level: .error)
             return nil
         }
 
-        let patterns: [(String, String)] = [
-            ("1080p", "\"1080\":\\{\"[sS]rc\":\"(.*?)\""),
-            ("720p", "\"720\":\\{\"[sS]rc\":\"(.*?)\""),
-            ("480p", "\"480\":\\{\"[sS]rc\":\"(.*?)\""),
-            ("360p", "\"360\":\\{\"[sS]rc\":\"(.*?)\"")
+        let vType = firstMatch("vInfo\\.type\\s*=\\s*['\"]([^'\"]+)['\"]", in: html)
+            ?? firstMatch("var\\s+type\\s*=\\s*['\"]([^'\"]+)['\"]", in: html)
+        let vId = firstMatch("vInfo\\.id\\s*=\\s*['\"]([^'\"]+)['\"]", in: html)
+            ?? firstMatch("var\\s+videoId\\s*=\\s*['\"]([^'\"]+)['\"]", in: html)
+        let vHash = firstMatch("vInfo\\.hash\\s*=\\s*['\"]([^'\"]+)['\"]", in: html)
+
+        guard let vType, let vId, let vHash else {
+            DebugLogger.log(.parser, "Kodik: missing vInfo (type=\(vType ?? "nil"), id=\(vId ?? "nil"), hash=\(vHash ?? "nil"))", level: .error)
+            return nil
+        }
+
+        let host = url.host ?? "kodikplayer.com"
+        guard let ftorURL = URL(string: "https://\(host)/ftor") else { return nil }
+
+        let rawRef = (urlParams["ref"] as? String) ?? ""
+        let decodedRef = rawRef.removingPercentEncoding ?? rawRef
+
+        let form: [String: String] = [
+            "d": (urlParams["d"] as? String) ?? "anixart-app.com",
+            "d_sign": (urlParams["d_sign"] as? String) ?? "",
+            "pd": (urlParams["pd"] as? String) ?? host,
+            "pd_sign": (urlParams["pd_sign"] as? String) ?? "",
+            "ref": decodedRef,
+            "ref_sign": (urlParams["ref_sign"] as? String) ?? "",
+            "bad_user": "false",
+            "cdn_is_working": "true",
+            "type": vType,
+            "hash": vHash,
+            "id": vId
         ]
 
-        var variants: [VideoStreamVariant] = []
-        for (label, pattern) in patterns {
-            if let matched = firstMatch(pattern, in: resp.body),
-               let normalizedURL = normalizeKodikStreamURL(matched) {
-                variants.append(.init(quality: label, url: normalizedURL))
-            }
+        let ftorResp: (body: String, headers: [String: String], statusCode: Int)
+        do {
+            ftorResp = try await client.fetchRawString(
+                url: ftorURL,
+                method: .post,
+                headers: [
+                    "User-Agent": defaultUserAgent,
+                    "Referer": url.absoluteString,
+                    "Origin": "https://\(host)",
+                    "X-Requested-With": "XMLHttpRequest"
+                ],
+                form: form
+            )
+        } catch {
+            DebugLogger.log(.parser, "Kodik /ftor request failed: \(error.localizedDescription)", level: .error)
+            return nil
         }
 
-        // JSON fallback если структура ответа отличается от плоского { "720": { "src": "..." } }
-        if variants.isEmpty,
-           let data = resp.body.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let root = (json["links"] as? [String: Any]) ?? json
-            for key in ["1080", "720", "480", "360"] {
-                if let entry = root[key] as? [String: Any],
-                   let src = (entry["src"] as? String) ?? (entry["Src"] as? String),
-                   let normalizedURL = normalizeKodikStreamURL(src) {
-                    variants.append(.init(quality: "\(key)p", url: normalizedURL))
-                } else if let arrayEntry = (root[key] as? [[String: Any]])?.first,
-                          let src = (arrayEntry["src"] as? String) ?? (arrayEntry["Src"] as? String),
-                          let normalizedURL = normalizeKodikStreamURL(src) {
-                    variants.append(.init(quality: "\(key)p", url: normalizedURL))
+        guard let ftorData = ftorResp.body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: ftorData) as? [String: Any] else {
+            let snippet = String(ftorResp.body.prefix(300))
+            DebugLogger.log(.parser, "Kodik /ftor invalid JSON (HTTP \(ftorResp.statusCode)): \(snippet)", level: .error)
+            return nil
+        }
+
+        var variants: [VideoStreamVariant] = []
+        if let links = json["links"] as? [String: Any] {
+            let orderedKeys = links.keys.sorted { (Int($0) ?? 0) > (Int($1) ?? 0) }
+            for key in orderedKeys {
+                let rawSrc: String?
+                if let array = links[key] as? [[String: Any]] {
+                    rawSrc = (array.first?["src"] as? String) ?? (array.first?["Src"] as? String)
+                } else if let dict = links[key] as? [String: Any] {
+                    rawSrc = (dict["src"] as? String) ?? (dict["Src"] as? String)
+                } else {
+                    rawSrc = nil
+                }
+
+                if let rawSrc, let streamURL = decodeKodikSrc(rawSrc) {
+                    let label = key.hasSuffix("p") ? key : "\(key)p"
+                    variants.append(.init(quality: label, url: streamURL))
                 }
             }
         }
 
+        if variants.isEmpty, let singleLink = json["link"] as? String, let streamURL = decodeKodikSrc(singleLink) {
+            variants.append(.init(quality: "Auto (HLS)", url: streamURL))
+        }
+
         if variants.isEmpty {
-            let snippet = String(resp.body.prefix(400))
-            DebugLogger.log(.parser, "Kodik HTTP \(resp.statusCode) yielded 0 variants. Body prefix: \(snippet)", level: .error)
+            let snippet = String(ftorResp.body.prefix(400))
+            DebugLogger.log(.parser, "Kodik /ftor HTTP \(ftorResp.statusCode) yielded 0 variants: \(snippet)", level: .error)
         }
 
         return VideoParseResult(
             variants: variants,
-            headers: ["User-Agent": defaultUserAgent],
+            headers: [
+                "User-Agent": defaultUserAgent,
+                "Referer": url.absoluteString
+            ],
             useWebFallback: variants.isEmpty,
-            originalURL: url
+            originalURL: url,
+            webURL: makeWebURL(for: url)
         )
+    }
+
+    private func decodeKodikSrc(_ raw: String) -> URL? {
+        if raw.contains("//") {
+            return normalizeKodikStreamURL(raw)
+        }
+
+        // Kodik обфусцирует src через Caesar shift (+18 по буквам) + Base64.
+        // Сначала пробуем стандартный сдвиг 18, при необходимости перебираем 1...25.
+        let candidateShifts = [18, 8] + (1...25).filter { $0 != 18 && $0 != 8 }
+        for shift in candidateShifts {
+            let shifted = caesarShiftASCII(raw, shift: shift)
+            let remainder = shifted.count % 4
+            let padded = remainder == 0 ? shifted : shifted + String(repeating: "=", count: 4 - remainder)
+            if let data = Data(base64Encoded: padded),
+               let decoded = String(data: data, encoding: .utf8),
+               decoded.contains("//"),
+               let normalized = normalizeKodikStreamURL(decoded) {
+                return normalized
+            }
+        }
+
+        return nil
+    }
+
+    private func caesarShiftASCII(_ input: String, shift: Int) -> String {
+        var result = String()
+        result.reserveCapacity(input.count)
+        for scalar in input.unicodeScalars {
+            let v = Int(scalar.value)
+            if v >= 65 && v <= 90 {
+                let rotated = ((v - 65 + shift) % 26) + 65
+                result.unicodeScalars.append(UnicodeScalar(rotated)!)
+            } else if v >= 97 && v <= 122 {
+                let rotated = ((v - 97 + shift) % 26) + 97
+                result.unicodeScalars.append(UnicodeScalar(rotated)!)
+            } else {
+                result.unicodeScalars.append(scalar)
+            }
+        }
+        return result
     }
 
     private func normalizeKodikStreamURL(_ raw: String) -> URL? {
@@ -365,7 +470,7 @@ struct VideoParserService: Sendable {
               let data = resp.body.data(using: .utf8),
               let release = try? JSONDecoder.anixart.decode(AniLibriaRelease.self, from: data),
               let episode = release.episodes?.first(where: { $0.ordinal == ep }) else {
-            DebugLogger.log(.parser, "AniLibria: failed to fetch/find episode \(ep)", level: .error)
+            DebugLogger.log(.parser, "AniLibria: failed to fetch/find episode \(ep) for releaseId=\(releaseId)", level: .error)
             return nil
         }
 

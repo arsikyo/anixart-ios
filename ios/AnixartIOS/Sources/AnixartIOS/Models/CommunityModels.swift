@@ -89,6 +89,20 @@ struct CollectionItem: Codable, Identifiable, Hashable, Sendable {
     let isPrivate: Bool?
     let creator: Profile?
 
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        image = try c.decodeIfPresent(String.self, forKey: .image)
+        favoriteCount = try c.decodeIfPresent(Int.self, forKey: .favoriteCount)
+        commentCount = try c.decodeIfPresent(Int.self, forKey: .commentCount)
+        releaseCount = try c.decodeIfPresent(Int.self, forKey: .releaseCount)
+        isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite)
+        isPrivate = try c.decodeIfPresent(Bool.self, forKey: .isPrivate)
+        creator = try c.decodeObjectOrIgnoreRefIfPresent(Profile.self, forKey: .creator)
+    }
+
     var imageURL: URL? {
         guard let image, !image.isEmpty else { return nil }
         return URL(string: image)
@@ -116,6 +130,20 @@ struct ReleaseComment: Codable, Identifiable, Hashable, Sendable {
     let myVote: Int?
     let replyCount: Int?
     let profile: Profile?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        message = try c.decodeIfPresent(String.self, forKey: .message)
+        timestamp = try c.decodeIfPresent(Int64.self, forKey: .timestamp)
+        isSpoiler = try c.decodeIfPresent(Bool.self, forKey: .isSpoiler)
+        isEdited = try c.decodeIfPresent(Bool.self, forKey: .isEdited)
+        isDeleted = try c.decodeIfPresent(Bool.self, forKey: .isDeleted)
+        voteCount = try c.decodeIfPresent(Int.self, forKey: .voteCount)
+        myVote = try c.decodeIfPresent(Int.self, forKey: .myVote)
+        replyCount = try c.decodeIfPresent(Int.self, forKey: .replyCount)
+        profile = try c.decodeObjectOrIgnoreRefIfPresent(Profile.self, forKey: .profile)
+    }
 }
 
 struct CommentAddRequest: Encodable, Sendable {
@@ -138,6 +166,21 @@ struct ProfileNotification: Decodable, Identifiable, Hashable, Sendable {
     let isNew: Bool?
     let release: Release?
     let byProfile: Profile?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, type, message, isNew, release, byProfile
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        timestamp = try c.decodeIfPresent(Int64.self, forKey: .timestamp)
+        type = try c.decodeIfPresent(String.self, forKey: .type)
+        message = try c.decodeIfPresent(String.self, forKey: .message)
+        isNew = try c.decodeIfPresent(Bool.self, forKey: .isNew)
+        release = try c.decodeObjectOrIgnoreRefIfPresent(Release.self, forKey: .release)
+        byProfile = try c.decodeObjectOrIgnoreRefIfPresent(Profile.self, forKey: .byProfile)
+    }
 }
 
 struct NotificationCountResponse: Decodable, APIStatus, Sendable {

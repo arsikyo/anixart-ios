@@ -206,7 +206,7 @@ struct VideoPlayerView: View {
                     } else if let result = parseResult {
                         if forceWebPlayer || result.useWebFallback || selectedVariant == nil {
                             WebVideoRepresentable(
-                                url: result.originalURL,
+                                url: result.webURL,
                                 headers: result.headers,
                                 onError: makeWebErrorHandler()
                             )
@@ -394,7 +394,7 @@ struct VideoPlayerView: View {
             DebugLogger.log(.player, "Using native AVPlayer with variant '\(first.quality)' (\(result.variants.count) total)")
             selectVariant(first, headers: result.headers)
         } else {
-            DebugLogger.log(.player, "Using WKWebView fallback for \(result.originalURL.absoluteString)", level: .warning)
+            DebugLogger.log(.player, "Using WKWebView fallback for \(result.webURL.absoluteString)", level: .warning)
             selectedVariant = nil
         }
 

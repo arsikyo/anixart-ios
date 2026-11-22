@@ -15,7 +15,9 @@ enum APIConfiguration {
     private static let sibnetUserAgentKey = "anixart.parser.sibnetUA"
     private static let sibnetRandUAKey = "anixart.parser.sibnetRandUA"
     private static let kodikVideoLinksKey = "anixart.parser.kodikVideoLinksURL"
-    static let defaultKodikVideoLinksURL = "https://kodikres.com/api/video-links?p=56a768d08f43091901c44b54fe970049"
+    private static let iframeEmbedURLKey = "anixart.parser.iframeEmbedURL"
+    static let defaultKodikVideoLinksURL = "https://kodikplayer.com/get-video-info"
+    static let defaultIframeEmbedURL = "https://anixmirai.com/iframe?url="
 
     static var baseURL: URL {
         guard let raw = UserDefaults.standard.string(forKey: baseURLKey),
@@ -62,6 +64,16 @@ enum APIConfiguration {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: kodikVideoLinksKey)
+        }
+    }
+
+    static var iframeEmbedURL: String {
+        get {
+            let stored = UserDefaults.standard.string(forKey: iframeEmbedURLKey) ?? ""
+            return stored.isEmpty ? defaultIframeEmbedURL : stored
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: iframeEmbedURLKey)
         }
     }
 
